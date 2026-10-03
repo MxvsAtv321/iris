@@ -135,10 +135,11 @@ async def show(text):
 
 
 try:
+    from memory import router as memory_router
     from memory import save_moment
 except Exception as e:  # noqa: BLE001 - memory is Darren's; the brain runs without it
-    save_moment = None
-    log.warning("memory module not available (%s); moments won't be saved", e)
+    save_moment = memory_router = None
+    log.warning("memory module not available (%s); moments won't be saved or searched", e)
 
 
 async def remember(sid, jpeg, description):
@@ -148,7 +149,8 @@ async def remember(sid, jpeg, description):
         args = (sid, datetime.now(timezone.utc), jpeg, description)
         call = save_moment(*args) if inspect.iscoroutinefunction(save_moment) else asyncio.to_thread(save_moment, *args)
         moment_id = await asyncio.wait_for(call, 3)
-        await emit("memory_saved", sid, moment_id=moment_id, description=description)
+        if moment_id is not None:   # None: duplicate frame or failed save
+            await emit("memory_saved", sid, moment_id=moment_id, description=description)
     except Exception as e:  # noqa: BLE001
         log.warning("memory save failed: %s", e)
 
@@ -259,6 +261,8 @@ async def lifespan(app):
 
 
 app = FastAPI(lifespan=lifespan)
+if memory_router is not None:
+    app.include_router(memory_router)
 
 
 # ---------- routes ----------
@@ -312,7 +316,8 @@ async def ask(q: AskIn):
                                         json={"session_id": sid, "query": question}, timeout=2)
                     r.raise_for_status()
                     hit = r.json()
-                    memo = f"{hit.get('captured_at', '')}: {hit.get('description', '')}"
+                    if hit.get("found"):
+                        memo = f"{hit.get('captured_at', '')}: {hit.get('description', '')}"
                 except Exception as e:  # noqa: BLE001
                     log.warning("memory search failed (%s); answering from recent context", e)
             msgs = llm.messages(prompts.ASK[mode], prompts.build_ask(question, s, memo), jpeg)
