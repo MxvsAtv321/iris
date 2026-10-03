@@ -1,0 +1,23 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# node
+node_modules/
+dist/
+.vite/
+
+# os / editors
+.DS_Store
+.idea/
+.vscode/
+
+# arduino build output
+build/
