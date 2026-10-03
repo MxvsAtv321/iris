@@ -29,6 +29,9 @@ log = logging.getLogger("iris")
 CAMERA = os.getenv("CAMERA_URL") or "http://172.20.10.4"
 HUD = os.getenv("HUD_URL") or "http://172.20.10.6"
 PORT = int(os.getenv("PORT") or 8000)
+# The camera forgets these on restart, so they are sent at startup and at every session start. Empty means leave it alone.
+CAMERA_SETTINGS = {var: (os.getenv(env) or "").strip() for var, env in
+                   (("framesize", "CAMERA_FRAMESIZE"), ("vflip", "CAMERA_VFLIP"), ("hmirror", "CAMERA_HMIRROR"))}
 TICK_S, BACKOFF_S = 2, 5       # capture cadence; slower after 3 errors in a row
 LOOP_GAP_S = 6                 # at most one loop model call per 6 s (<=10 RPM, rest kept for questions)
 CHANGE_THRESHOLD = 12          # mean abs grey-level diff (0-255) on a 32x24 thumbnail; calibrate on site
@@ -118,6 +121,23 @@ async def capture():
     r.raise_for_status()
     frame["jpeg"], frame["ts"] = r.content, time.time()
     return r.content
+
+
+async def setup_camera():
+    """Send frame size and orientation to the camera. Never raises: an unreachable camera is a warning."""
+    wanted = {var: val for var, val in CAMERA_SETTINGS.items() if val}
+    if not wanted:
+        return
+    async with camera_lock:
+        try:
+            for var, val in wanted.items():
+                r = await http.get(CAMERA + "/control", params={"var": var, "val": val}, timeout=1)
+                r.raise_for_status()
+            await http.get(CAMERA + "/capture", timeout=1.5)   # the first frame after a change can be an old one
+        except Exception as e:  # noqa: BLE001 - one warning, and no second spent on each remaining setting
+            log.warning("camera settings %s not applied: %s: %s", wanted, type(e).__name__, e)
+            return
+    log.info("camera settings applied: %s", wanted)
 
 
 async def fresh_frame():
@@ -273,6 +293,7 @@ async def lifespan(app):
     tasks = [asyncio.create_task(watch_loop()), asyncio.create_task(metrics_loop())]
     bg(llm.warm())
     bg(live.prefetch(http))
+    bg(setup_camera())
     yield
     for t in tasks:
         t.cancel()
@@ -292,6 +313,7 @@ class SessionIn(BaseModel):
 
 @app.post("/api/session")
 async def start_session(body: SessionIn):
+    await setup_camera()              # before the loop looks: a restarted camera is small and upside down
     sid, prev = body.session_id, state["last_session"]
     s = session(sid)
     if prev and prev != sid:
