@@ -21,3 +21,7 @@ dist/
 
 # arduino build output
 build/
+
+# brain runtime state (sessions, daily model budget)
+brain/state.json
+brain/state.tmp

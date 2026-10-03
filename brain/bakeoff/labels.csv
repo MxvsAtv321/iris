@@ -1,0 +1,11 @@
+photo,expected_level,question,answer_must_contain,expected_box
+snack_label.jpg,silent,how much protein is in this?,,
+snack_no_label.jpg,silent,how much protein is in this?,,
+whiteboard_mistake.jpg,speak,,,
+whiteboard_correct.jpg,silent,,,
+empty_desk.jpg,silent,what is this?,,
+person.jpg,silent,,,
+street_sign.jpg,silent,what does that say?,,
+hazard.jpg,speak,,,
+phone_on_table.jpg,silent,what is this?,phone,
+room.jpg,silent,,,
