@@ -1,0 +1,14 @@
+.iris-visual{position:relative;width:280px;height:280px;contain:layout paint;isolation:isolate}
+.iris-canvas{display:block;width:100%;height:100%}
+.hidden-canvas{visibility:hidden}
+.iris-simple{position:absolute;inset:15%;border-radius:50%;background:repeating-conic-gradient(from 0deg,#b3a0ff 0deg,#5541bf 1deg,#21134c 2deg,#7258e0 3deg);box-shadow:0 0 24px #7958db55,inset 0 0 20px #a182ed;mask-image:radial-gradient(circle,#0000 23%,#000 30%,#000 57%,#0000 72%);animation:iris-drift 16s linear infinite}
+.iris-simple div{position:absolute;inset:27%;border-radius:50%;background:#080714;box-shadow:0 0 16px #ae8bff}
+.iris-visual[data-state=listening] .iris-simple{mask-image:radial-gradient(circle,#0000 32%,#000 40%,#000 60%,#0000 72%)}
+.iris-visual[data-state=thinking] .iris-simple{animation-duration:5s;animation-direction:reverse}
+.iris-visual[data-state=speaking] .iris-simple{animation:iris-breathe 1.3s ease-in-out infinite alternate}
+.orb-area{height:280px}
+.orb-caption{color:#ac9fce}
+@keyframes iris-drift{to{transform:rotate(360deg)}}
+@keyframes iris-breathe{to{transform:scale(1.07);filter:brightness(1.3)}}
+@media(max-width:700px){.iris-visual{width:250px;height:250px}.orb-area{height:250px}}
+@media(prefers-reduced-motion:reduce){.iris-simple{animation:none!important}}

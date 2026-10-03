@@ -1,0 +1,142 @@
+/* Memory garden. Night garden palette, one bookish serif, quiet chrome so the
+   glowing buds are the only bright thing on screen.
+
+   Every rule is scoped under .garden so this file can't restyle the rest of
+   the app. The tokens below are the single source for the garden's look in
+   2D and 3D (theme.ts reads them for the scene). To apply the shared Figma
+   look, change the values here, keeping hex or rgb() so the 3D side can read
+   them. */
+
+/* The garden's font, bundled in public/fonts (the same files the 3D labels use),
+   so nothing loads from a font CDN. Declaring a face styles nothing by itself. */
+@font-face {
+  font-family: "Literata";
+  src: url("/fonts/literata-latin-400-normal.woff") format("woff");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Literata";
+  src: url("/fonts/literata-latin-600-normal.woff") format("woff");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+.garden {
+  --dusk: #241f3d;
+  --dusk-deep: #14122a;
+  --ground: #3b5e4a;
+  --sky-light: #a9a3e0;
+  --stone: #9aa6ad;
+  --stem: #3f6b52;
+  --mist: #d8dfe9;
+  --glow: #a8f0d6;
+  --pollen: #f4cf72;
+
+  --font: "Literata", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --step--1: 0.875rem;
+  --step-0: 1rem;
+  --step-1: 1.25rem;
+  --radius-control: 999px;
+  --radius-card: 14px;
+
+  position: fixed;
+  inset: 0;
+  background: var(--dusk);
+  color: var(--mist);
+  font-family: var(--font);
+  font-size: var(--step-0);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.garden,
+.garden *,
+.garden *::before,
+.garden *::after { box-sizing: border-box; }
+
+.garden canvas { display: block; touch-action: none; }
+
+.garden .overlay { position: absolute; inset: 0; pointer-events: none; }
+.garden .overlay > * { pointer-events: auto; }
+
+.garden .masthead {
+  position: absolute; top: max(16px, env(safe-area-inset-top)); left: 20px;
+  display: flex; align-items: baseline; gap: 12px;
+}
+.garden .wordmark { font-size: var(--step-1); font-weight: 600; letter-spacing: 0.01em; color: var(--glow); }
+.garden .count { font-size: var(--step--1); opacity: 0.75; }
+
+.garden .modes {
+  position: absolute; top: max(14px, env(safe-area-inset-top)); right: 16px;
+  display: flex; gap: 8px;
+}
+
+.garden .notice {
+  position: absolute; top: 64px; left: 20px; max-width: 34ch; margin: 0;
+  font-size: var(--step--1); opacity: 0.85;
+}
+.garden .notice-error { color: var(--pollen); opacity: 1; }
+
+.garden .moment-card {
+  position: absolute; left: 20px; bottom: 96px; width: min(380px, calc(100vw - 40px));
+  padding: 16px 18px; border-radius: var(--radius-card);
+  background: color-mix(in srgb, var(--dusk-deep) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--pollen) 35%, transparent);
+  backdrop-filter: blur(8px);
+}
+.garden .moment-card .when { margin: 0 0 4px; color: var(--pollen); font-weight: 600; }
+.garden .moment-card .what { margin: 0 0 14px; font-size: var(--step--1); line-height: 1.6; max-width: 60ch; }
+.garden .moment-card .actions { display: flex; gap: 8px; }
+
+.garden .open-bar { position: absolute; left: 20px; bottom: 96px; }
+
+.garden .status {
+  position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%);
+  margin: 0; max-width: min(46ch, calc(100vw - 40px)); text-align: center;
+  font-size: var(--step--1); color: var(--glow);
+}
+
+.garden .ask {
+  position: absolute; left: 50%; bottom: max(20px, env(safe-area-inset-bottom)); transform: translateX(-50%);
+  display: flex; gap: 6px; width: min(560px, calc(100vw - 32px));
+  padding: 6px; border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--dusk-deep) 85%, transparent);
+  border: 1px solid color-mix(in srgb, var(--mist) 18%, transparent);
+}
+.garden .ask input {
+  flex: 1; min-width: 0; padding: 10px 14px; border: 0; background: transparent;
+  color: var(--mist); font: inherit;
+}
+.garden .ask input::placeholder { color: color-mix(in srgb, var(--mist) 50%, transparent); }
+.garden .ask input:focus { outline: none; }
+.garden .ask:focus-within { border-color: var(--glow); }
+
+.garden button {
+  font: inherit; font-size: var(--step--1); padding: 9px 16px; border-radius: var(--radius-control);
+  border: 1px solid color-mix(in srgb, var(--mist) 28%, transparent);
+  background: color-mix(in srgb, var(--dusk-deep) 70%, transparent); color: var(--mist); cursor: pointer;
+}
+.garden button:hover:not(:disabled) { border-color: var(--glow); }
+.garden button:disabled { opacity: 0.5; cursor: default; }
+.garden button.primary { background: var(--pollen); border-color: var(--pollen); color: var(--dusk-deep); font-weight: 600; }
+.garden button:focus-visible,
+.garden input:focus-visible { outline: 2px solid var(--glow); outline-offset: 2px; }
+
+.garden .exit-cardboard { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); opacity: 0.6; }
+
+.garden.garden-empty { overflow: auto; }
+.garden .garden-empty-body { max-width: 46ch; margin: 18vh auto 0; padding: 0 24px; }
+.garden .garden-empty-body h1 { font-size: 2rem; font-weight: 600; color: var(--glow); margin: 0 0 12px; }
+
+.garden .visually-hidden {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
+
+@media (max-width: 600px) {
+  .garden .moment-card,
+  .garden .open-bar { bottom: 132px; }
+  .garden .status { bottom: 80px; }
+}
