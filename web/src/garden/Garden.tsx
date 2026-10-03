@@ -112,7 +112,7 @@ export function Garden() {
   // ------------------------------------------------------------- data
 
   const refresh = useCallback(async () => {
-    if (!sessionId) return;
+    if (!sessionId || !memoryConfigured) return;
     try {
       const list = await listMoments(sessionId);
       setMoments(list);
@@ -131,9 +131,10 @@ export function Garden() {
   }, [refresh]);
 
   useEffect(() => {
+    if (!sessionId || !memoryConfigured) return;
     navigator.xr?.isSessionSupported("immersive-vr").then(setVrSupported).catch(() => setVrSupported(false));
-    depth().then((d) => d.warmDepthModel()); // start the model download while the judge looks around
-  }, []);
+    depth().then((d) => d.warmDepthModel()).catch(() => setStatus("Depth preview is unavailable. You can still browse memories.")); // start the model download while the judge looks around
+  }, [sessionId]);
 
   // ------------------------------------------------------------- moments
 
@@ -182,7 +183,7 @@ export function Garden() {
 
   // Follow questions asked anywhere for this session.
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || !memoryConfigured) return;
     let stopped = false;
     const poll = async () => {
       try {

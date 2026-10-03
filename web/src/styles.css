@@ -1,0 +1,133 @@
+@import "tailwindcss";
+
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  font-weight: 400;
+  color: #f7f5ff;
+  background: #05050a;
+  --iris-bg: #05050a;
+  --iris-surface: rgba(18,17,29,.62);
+  --iris-raised: rgba(20,19,35,.8);
+  --iris-border: rgba(255,255,255,.08);
+  --iris-accent-border: rgba(185,164,255,.2);
+  --iris-text: #f7f5ff;
+  --iris-muted: #9995ab;
+  --iris-accent: #c6b3ff;
+}
+* { box-sizing: border-box }
+body { margin: 0; min-height: 100dvh; background: radial-gradient(ellipse 850px 600px at 50% 15%, #171329 0%, #080811 50%, #05050a 100%) }
+button,input { font: inherit }
+button,a,input { -webkit-tap-highlight-color: transparent }
+button,a { transition: background .18s, color .18s, border-color .18s, box-shadow .18s }
+button { cursor: pointer; border: 0 }
+button:disabled { opacity: .4; cursor: not-allowed }
+a { color: inherit; text-decoration: none }
+button:focus-visible,a:focus-visible,input:focus-visible { outline: 2px solid var(--iris-accent); outline-offset: 5px }
+input { min-width: 0 }
+input[type=checkbox] { accent-color: #9a78ff }
+h1,h2,h3,p { margin: 0 }
+h1,h2,h3 { font-weight: 500 }
+.app-shell { max-width: 1320px; margin: auto; padding: 0 48px; min-height: 100dvh }
+.topbar { min-height: 100px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--iris-border); gap: 24px }
+.brand { display: flex; align-items: center; gap: 8px }
+.brand .identity-slot img { max-width: none }
+.brand-copy { display: flex; flex-direction: column; gap: 2px }
+.brand-copy strong { font-size: 13px; line-height: 16px; font-weight: 600 }
+.brand-copy small { font-size: 9px; color: var(--iris-muted); font-weight: 500; letter-spacing: .3px }
+.topbar nav { display: flex; gap: 4px; padding: 5px; border: 1px solid var(--iris-border); background: var(--iris-surface); border-radius: 999px }
+.topbar nav a { padding: 10px 18px; font-size: 12px; color: var(--iris-muted); border-radius: 999px }
+.topbar nav a:hover { color: var(--iris-text); background: #ffffff05 }
+.topbar nav .active { background: #c6b3ff12; color: var(--iris-accent); box-shadow: inset 0 0 0 1px #c6b3ff20 }
+.edition { font-size: 9px; letter-spacing: 1.6px; color: var(--iris-muted) }
+.edition span { margin: 0 12px; color: #6d687e }
+.session-bar { display: flex; justify-content: space-between; align-items: center; padding: 18px 0; gap: 16px; font-size: 11px; color: var(--iris-muted) }
+.session-bar form { display: flex; align-items: center; gap: 12px }
+.session-bar label { letter-spacing: 1px }
+.session-bar input:not([type=checkbox]) { width: 130px; border: 1px solid var(--iris-border); border-radius: 999px; color: var(--iris-text); background: var(--iris-surface); padding: 8px 12px }
+.session-bar button { background: transparent; color: var(--iris-accent); font-size: 11px; padding: 8px 4px }
+.demo-toggle { display: flex; gap: 8px; align-items: center; cursor: pointer }
+.demo-banner { border: 1px solid var(--iris-accent-border); background: var(--iris-raised); color: var(--iris-accent); padding: 12px 18px; border-radius: 18px; font-size: 12px; line-height: 1.6; margin-bottom: 20px }
+.eyebrow { font-size: 10px; font-weight: 600; letter-spacing: 1.5px; color: var(--iris-accent); display: flex; justify-content: space-between; align-items: center }
+.connection { display: inline-flex; gap: 8px; align-items: center; padding: 9px 13px; border: 1px solid var(--iris-border); background: var(--iris-surface); border-radius: 999px; font-size: 11px; color: var(--iris-muted); white-space: nowrap }
+.connection i { width: 5px; height: 5px; border-radius: 50%; background: #6d687e }
+.connection.online i { background: var(--iris-accent); box-shadow: 0 0 10px #9a78ff99 }
+.panel { border: 1px solid var(--iris-border); border-radius: 22px; background: var(--iris-surface) }
+.dashboard { padding: 40px 0 70px }
+.dashboard-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; gap: 20px }
+.dashboard h1 { font-size: clamp(28px,3.3vw,42px); font-weight: 300; line-height: 1.2; letter-spacing: -1.4px; margin: 14px 0 12px }
+.dashboard-heading p:not(.eyebrow) { font-size: 13px; line-height: 1.6; color: var(--iris-muted) }
+.metrics-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; margin-bottom: 28px }
+.metric { padding: 24px; background: var(--iris-raised); border-color: var(--iris-accent-border); box-shadow: 0 14px 34px #0003 }
+.metric>p { font-size: 9px; font-weight: 600; letter-spacing: 1px; color: var(--iris-muted); display: flex; align-items: center; justify-content: space-between }
+.metric>p>span { color: var(--iris-accent); font-size: 16px }
+.metric strong { display: block; font-size: 52px; line-height: 1; letter-spacing: -2px; font-weight: 300; margin: 25px 0 18px; font-variant-numeric: tabular-nums }
+.metric small { font-size: 24px; color: var(--iris-accent); letter-spacing: -1px }
+.metric>span { display: block; font-size: 11px; line-height: 1.6; color: var(--iris-muted) }
+.feed-panel { overflow: hidden; box-shadow: 0 14px 34px #0003 }
+.feed-heading { display: flex; justify-content: space-between; padding: 26px; align-items: center; gap: 20px }
+.feed-heading h2 { font-size: 18px; letter-spacing: -.4px }
+.feed-heading p { font-size: 11px; color: var(--iris-muted); margin-top: 7px; overflow-wrap: anywhere }
+.secondary { padding: 10px 16px; border: 1px solid var(--iris-accent-border); background: #c6b3ff08; color: var(--iris-accent); border-radius: 999px; font-size: 11px; white-space: nowrap }
+.secondary:hover { background: #c6b3ff18; box-shadow: 0 0 20px #7e4dff15 }
+.filters { display: flex; align-items: center; gap: 6px; padding: 0 26px 20px; border-bottom: 1px solid var(--iris-border); flex-wrap: wrap }
+.filters button { padding: 8px 15px; border-radius: 999px; color: var(--iris-muted); background: transparent; font-size: 11px; text-transform: capitalize }
+.filters button:hover { color: var(--iris-text); background: #ffffff05 }
+.filters button.selected { color: var(--iris-accent); background: #c6b3ff12; box-shadow: inset 0 0 0 1px #c6b3ff22 }
+.filters>span { font-size: 9px; letter-spacing: .8px; color: var(--iris-accent); margin-left: auto }
+.feed-row { display: grid; grid-template-columns: 95px 112px minmax(0,1fr); gap: 18px; padding: 20px 26px; border-bottom: 1px solid var(--iris-border); align-items: start; font-size: 12px }
+.feed-row:last-child { border: 0 }
+.table-labels { font-size: 9px; letter-spacing: 1px; font-weight: 500; color: var(--iris-muted); padding-top: 14px; padding-bottom: 14px; background: #08081166 }
+.feed-row time { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--iris-muted); padding-top: 4px }
+.badge { border: 1px solid var(--iris-border); color: var(--iris-muted); border-radius: 999px; padding: 5px 9px; width: fit-content; font-size: 9px; text-transform: uppercase; letter-spacing: .7px }
+.badge.display,.badge.answer { color: var(--iris-accent); border-color: var(--iris-accent-border); background: #c6b3ff08 }
+.badge.speak { color: #e6dbff; border-color: #b9a4ff44; background: #7e4dff26; box-shadow: 0 0 16px #7e4dff12 }
+.feed-row p { line-height: 1.6; overflow-wrap: anywhere }
+.feed-row div>span { display: block; margin-top: 5px; color: var(--iris-muted); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere }
+.feed-empty { padding: 65px 20px; text-align: center }
+.feed-empty>span { color: var(--iris-accent); font-size: 30px; text-shadow: 0 0 22px #9a78ff88 }
+.feed-empty h3 { font-size: 20px; margin: 15px 0 10px; font-weight: 400 }
+.feed-empty p,.dashboard-note { color: var(--iris-muted); font-size: 12px; line-height: 1.7 }
+.dashboard-note { margin-top: 20px; max-width: 850px }
+.wake-option { display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 11px; color: var(--iris-muted) }
+.error-box { border: 1px solid #d7a7bb44; background: #28132155; padding: 15px; border-radius: 18px; color: #ecd0df; font-size: 13px; line-height: 1.7 }
+.error-box button { display: block; background: transparent; color: var(--iris-text); text-decoration: underline; margin-top: 8px }
+footer { display: flex; justify-content: space-between; gap: 15px; padding: 23px 0 30px; border-top: 1px solid var(--iris-border); color: var(--iris-muted); font-size: 9px; letter-spacing: 1.3px }
+.empty-page { margin: 50px auto 70px; padding: 64px; min-height: 50vh; border: 1px solid var(--iris-accent-border); border-radius: 22px; background: radial-gradient(ellipse at 80% 0%,#7e4dff14,transparent 65%),var(--iris-surface); box-shadow: 0 14px 34px #0004 }
+.empty-page h1 { font-size: clamp(32px,4vw,48px); font-weight: 300; line-height: 1.15; letter-spacing: -1.5px; margin: 24px 0 20px; max-width: 600px }
+.empty-page p:not(.eyebrow) { color: var(--iris-muted); font-size: 14px; line-height: 1.8; max-width: 530px }
+.empty-page a { display: inline-block; margin-top: 32px; padding: 13px 20px; color: var(--iris-accent); border: 1px solid var(--iris-accent-border); border-radius: 999px; background: #c6b3ff0a; font-size: 12px }
+@media(max-width:1000px) {
+  .app-shell { padding: 0 28px }
+  .edition { display: none }
+}
+@media(max-width:700px) {
+  .app-shell { padding: 0 20px }
+  .topbar { padding: 20px 0; gap: 16px; flex-wrap: wrap; min-height: 78px }
+  .brand-copy small { font-size: 8px }
+  .topbar nav a { padding: 8px 12px; font-size: 11px }
+  .session-bar { padding: 15px 0; flex-wrap: wrap }
+  .session-bar form { gap: 7px }
+  .session-bar input:not([type=checkbox]) { width: 102px }
+  .session-bar label { font-size: 9px; letter-spacing: .8px }
+  .dashboard { padding-top: 24px }
+  .dashboard-heading { align-items: flex-start; flex-direction: column; gap: 16px }
+  .metrics-grid { grid-template-columns: 1fr; gap: 12px }
+  .metric { padding: 20px; border-radius: 18px }
+  .metric strong { margin: 18px 0 12px; font-size: 44px }
+  .feed-heading { padding: 20px }
+  .filters { padding: 0 14px 16px }
+  .filters>span { width: 100%; margin-top: 6px; margin-left: 6px }
+  .feed-row { grid-template-columns: 60px 74px minmax(0,1fr); padding: 16px 12px; gap: 8px }
+  .feed-row time { font-size: 9px }
+  .badge { font-size: 8px; letter-spacing: .2px; padding: 4px 6px }
+  .table-labels { font-size: 8px; letter-spacing: .4px }
+  .feed-row p { font-size: 11px }
+  .feed-row div>span { font-size: 10px }
+  .empty-page { margin: 28px 0 45px; padding: 30px 22px; min-height: 55vh }
+  footer { font-size: 7px; letter-spacing: .7px }
+  .demo-banner { font-size: 10px }
+}
+@media(prefers-reduced-motion:reduce) {
+  *,*::before,*::after { animation: none!important; transition: none!important }
+}
