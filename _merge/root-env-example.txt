@@ -1,0 +1,30 @@
+# ------------------------------------------------------------------------------
+# Memory and VR garden (Darren). Details in neon/README.md.
+# ------------------------------------------------------------------------------
+
+# The Neon memory function, origin only. From `neon functions get memory`.
+MEMORY_URL=
+# Shared secret for saving frames. Never sent to the browser. Generate with `openssl rand -hex 24`.
+INGEST_TOKEN=
+# Used by the memory function for embeddings and for pulling the object out of a question.
+OPENAI_API_KEY=
+# Optional. An endpoint that describes a JPEG, used instead of VISION_MODEL when a frame has no description.
+DESCRIBE_URL=
+# Models the memory function uses. The vision one only runs when a frame arrives without a description.
+VISION_MODEL=gpt-4o-mini
+TEXT_MODEL=gpt-4o-mini
+# How similar a frame must be to the last one to be skipped, and the floor for a search match.
+DEDUPE_THRESHOLD=0.95
+SEARCH_MIN_SIMILARITY=0.30
+# The team tunnel's address, e.g. https://iris.example.com. Only this site may call memory
+# from a browser. * allows any origin while testing.
+WEB_ORIGIN=*
+
+# Web app. Only VITE_ settings reach the browser.
+VITE_MEMORY_URL=${MEMORY_URL}
+# The tunnel's hostname (no https://), so the web app's server accepts requests for it.
+TUNNEL_HOST=
+
+# Optional, only to use an OpenAI-compatible service other than OpenAI.
+# OPENAI_BASE_URL=
+# EMBED_MODEL=text-embedding-3-small
