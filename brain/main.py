@@ -140,10 +140,13 @@ async def grab():
 
 
 async def show(text):
+    """Put one line on the glasses. Returns False when the display doesn't answer."""
     try:
-        await http.get(HUD + "/show", params={"text": text[:40]}, timeout=1)
+        await http.get(HUD + "/show", params={"text": (text or "")[:40]}, timeout=1)
+        return True
     except Exception as e:  # noqa: BLE001
         log.warning("display: %s", e)
+        return False
 
 
 try:
@@ -397,6 +400,29 @@ async def live_context(q: str):
     """The live data a question would get: for the dashboard and for testing on site."""
     text, sources = await live.note(q, http)
     return {"topics": sorted(live.topics(q)), "note": text, "sources": sources}
+
+
+@app.get("/api/scene")
+async def scene():
+    """What the glasses have just seen. The Act agent reads this before it does anything."""
+    sid = state["active"]
+    s = state["sessions"].get(sid, {}) if sid else {}
+    return {
+        "session_id": sid,
+        "recently_seen": (s.get("descriptions") or [])[-5:],
+        "already_said": (s.get("said") or [])[-3:],
+    }
+
+
+class ShowIn(BaseModel):
+    text: str
+
+
+@app.post("/api/show")
+async def show_text(body: ShowIn):
+    """One line on the glasses, for the Act agent. Under 40 characters stays in the large font."""
+    line = (body.text or "").strip()[:40]
+    return {"text": line, "shown": await show(line) if line else False}
 
 
 @app.websocket("/api/ws")

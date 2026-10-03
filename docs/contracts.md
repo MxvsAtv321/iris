@@ -43,6 +43,14 @@ Response:
 
 The live data a question would get, for testing and the dashboard: `{ "topics": ["sky"], "note": "Tonight in Ann Arbor: sunset 7:12 PM, ...", "sources": ["Open-Meteo"] }`. Topics: `weather`, `sky`, `launch`, `iss`. Questions on these topics are answered from this data (without the photo unless they say "this" or "that").
 
+### `GET /api/scene`
+
+What the glasses have just seen, for the Act agent: `{ "session_id": "judge-01" | null, "recently_seen": ["19:02 a protein bar on a wooden table"], "already_said": [] }`. `session_id` is null when no session is running.
+
+### `POST /api/show`
+
+Request: `{ "text": "Stay in" }`. Puts the text on the glasses display (cut to 40 characters) and returns `{ "text": "Stay in", "shown": true }`. `shown` is false when the text is empty or the display doesn't answer.
+
 ### `GET /api/tts?text=...`
 
 Streams `audio/mpeg` (ElevenLabs). Returns `204` if speech is unavailable; just show the text.

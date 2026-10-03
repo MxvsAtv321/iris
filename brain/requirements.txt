@@ -4,3 +4,4 @@ httpx
 python-dotenv
 pillow
 python-multipart
+uagents>=0.25.5
