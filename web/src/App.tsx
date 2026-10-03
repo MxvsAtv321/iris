@@ -39,16 +39,16 @@ export default function App() {
       <label className="demo-toggle"><input type="checkbox" checked={demo} onChange={e => setDemo(e.target.checked)} /> Demo mode</label>
     </div>
   return <div className={`app-shell ${!dashboard && !garden ? "phone-shell" : ""} ${garden ? "garden-route" : ""}`}>
-    <header className="topbar"><a className="brand" href="/phone"><span className="identity-slot"><img src="/figma/identity.svg" alt="" /></span><span className="brand-copy"><strong>IRIS</strong><small>VISUAL INTELLIGENCE</small></span></a>
+    <header className="topbar"><a className="brand" href="/phone"><span className="identity-slot"><img src="/figma/identity.svg" alt="" /></span><span className="brand-copy"><strong>IRIS</strong><small>Your glasses, connected</small></span></a>
       <nav aria-label="Main navigation"><a className={!dashboard && !garden ? 'active' : ''} href="/phone">Companion</a><a className={dashboard ? 'active' : ''} href="/dashboard">Dashboard</a><a className={garden ? 'active' : ''} href={`/garden?session=${encodeURIComponent(session)}`}>Garden</a></nav>
-      <span className="edition">MHACKS ’26 <span> / </span> SEE · REMEMBER · ACT</span>
+      
     </header>
     {(dashboard) && sessionControls}
     {demo && (dashboard || garden) && <div className="demo-banner">DEMO MODE · Scripted examples, no camera or brain connection. Answers are not observations.</div>}
     {garden && <nav className="garden-navigation" aria-label="Garden navigation"><a href="/phone">← Companion</a><span>MEMORY GARDEN</span><a href="/dashboard">Dashboard →</a></nav>}
     {garden ? <SafeBoundary fallback={<main className="empty-page"><h1>The garden could not load.</h1><p>Try reloading, or return to the companion.</p><a href="/phone">Back to companion →</a></main>}><Suspense fallback={<main className="empty-page" role="status">Opening your memory garden…</main>}><Garden /></Suspense></SafeBoundary> :
       dashboard ? <Dashboard key={session + demo} session={session} demo={demo} sessionOnline={sessionOnline} /> : <Phone key={session + demo} session={session} demo={demo} sessionOnline={sessionOnline} menu={sessionControls} settingsOpen={settingsOpen} onSettings={() => setSettingsOpen(!settingsOpen)} />}
-    <footer><span>KEEP YOUR GLASSES. SEE A LITTLE MORE.</span><span>IRIS / MHACKS 2026</span></footer>
+    <footer><span>Iris</span><span>MHacks 2026</span></footer>
   </div>
 }
 function Phone({ session, demo, sessionOnline, menu, settingsOpen, onSettings }: { session: string; demo: boolean; sessionOnline: boolean; menu: ReactNode; settingsOpen: boolean; onSettings: () => void }) {
@@ -172,36 +172,36 @@ function Phone({ session, demo, sessionOnline, menu, settingsOpen, onSettings }:
   const sample = demo && !answer
   const protein = answer?.display.match(/(\d+(?:\.\d+)?)\s*g\s+protein/i)?.[1]
   const visualState = speaking ? 'speaking' : phase === 'listening' || phase === 'thinking' ? phase : 'idle'
-  const stateLabel = speaking ? 'Speaking' : phase === 'thinking' ? 'Analyzing image' : phase === 'listening' ? 'Listening' : answer || sample ? 'Label resolved' : 'Ready when you are'
+  const stateLabel = speaking ? 'Speaking' : phase === 'thinking' ? 'Thinking' : phase === 'listening' ? 'Listening' : answer || sample ? 'Answered' : 'Ready'
   return <main className="figma-phone" data-node-id="3:417">
     <header className="figma-header">
-      <div className="figma-identity"><span className="identity-slot"><img src="/figma/identity.svg" alt="" /></span><div><strong>IRIS</strong><p>VISUAL INTELLIGENCE</p></div></div>
+      <div className="figma-identity"><span className="identity-slot"><img src="/figma/identity.svg" alt="" /></span><div><strong>IRIS</strong><p>Your glasses, connected</p></div></div>
       <button className="figma-more" aria-label="More options" aria-expanded={settingsOpen} onClick={onSettings}><img src="/figma/more.svg" alt="" /></button>
     </header>
-    <div className="figma-question-row"><div className="figma-question"><p>{question || (demo ? 'How much protein is in this?' : 'What would you like to know?')}</p><img src="/figma/scan.svg" alt="" /></div></div>
+    <div className="figma-question-row"><div className="figma-question"><p>{question || (demo ? 'How much protein is in this?' : 'What’s in front of you?')}</p><img src="/figma/scan.svg" alt="" /></div></div>
     <section className="figma-analysis" aria-label="Iris activity">
       <div className="figma-analysis-header"><span><span className="live-slot"><img src="/figma/live.svg" alt="" /></span>{stateLabel}</span><span>{demo ? 'DEMO' : status === 'Connected' ? 'LIVE' : 'OFFLINE'}</span></div>
       <IrisVisual state={visualState} readAmplitude={audioLevel.read} />
-      <div className="figma-signal"><i /><span>{phase === 'error' ? 'Try again' : stateLabel}</span><i /></div>
+      
     </section>
     <h1 className="sr-only" aria-live="polite">{phase === 'answering' ? 'Here’s what I found.' : phase === 'thinking' ? 'Taking a closer look.' : phase === 'listening' ? 'I’m listening.' : 'Iris visual assistant'}</h1>
     <section className={'figma-answer ' + (!(protein || sample) ? 'general-answer' : '')} aria-label="Answer" aria-live="polite">
       {(protein || sample) && <div className="figma-amount"><strong>{protein || '12'} g</strong><span>PROTEIN</span></div>}
-      <div className="figma-answer-copy"><p>{sample ? 'About 24% of your daily target in one bar.' : (phase === 'thinking' ? streamed?.text : answer?.display) || 'Ask about what’s in front of you.'}</p>
-        <span className="figma-confidence">{demo && <img src="/figma/badge.svg" alt="" />}{sample ? '96% label confidence · sample' : answer ? (demo ? 'Scripted demo answer' : latency + ' ms · answer time') : 'A little help, right when you need it.'}</span>
+      <div className="figma-answer-copy"><p>{sample ? 'About 24% of your daily target in one bar.' : (phase === 'thinking' ? streamed?.text : answer?.display) || 'Ask Iris'}</p>
+        <span className="figma-confidence">{demo && <img src="/figma/badge.svg" alt="" />}{sample ? 'Sample answer' : answer ? (demo ? 'Scripted demo answer' : latency + ' ms · answer time') : 'Tap the mic or type a question.'}</span>
       </div>
     </section>
-    <button className="figma-context" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(!detailsOpen)}>
+    {(demo || nudge) && <button className="figma-context" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(!detailsOpen)}>
       {demo ? <img className="figma-product" src="/figma/product.png" alt="Dark chocolate almond bar on a dark surface" /> : <div className="figma-context-placeholder"><img src="/figma/scan.svg" alt="" /><span>YOUR VIEW</span></div>}
-      <div className="figma-product-details"><span className="figma-recognition"><img src="/figma/sparkles.svg" alt="" />{demo ? 'VISUAL MATCH · SAMPLE' : 'IN YOUR VIEW'}</span>
-        <strong>{demo ? 'Dark cacao almond bar' : nudge?.text || 'Space for a useful thought'}</strong>
-        <p>{demo ? '1 bar · 52 g serving' : nudge ? 'A gentle heads-up from Iris' : 'Waiting for camera context'}</p>
+      <div className="figma-product-details"><span className="figma-recognition">{demo ? 'VISUAL MATCH · SAMPLE' : 'IN YOUR VIEW'}</span>
+        <strong>{demo ? 'Dark cacao almond bar' : nudge?.text || 'No updates yet'}</strong>
+        <p>{demo ? '1 bar · 52 g serving' : nudge ? 'Latest camera update' : 'Waiting for camera context'}</p>
         {demo && <div className="figma-nutrition"><span>214 kcal</span><img src="/figma/separator.svg" alt="" /><span>4 g sugar</span></div>}
       </div><img src="/figma/chevron.svg" alt="" />
-    </button>
-    {detailsOpen && <section className="figma-extra">{demo ? 'This is the sample product from the Figma design, not a live camera observation.' : nudge?.reason || 'The current backend contract does not provide a product photo or nutrition metadata.'}<a href="/dashboard">See the decision stream →</a></section>}
+    </button>}
+    {detailsOpen && <section className="figma-extra">{demo ? 'This is the sample product from the Figma design, not a live camera observation.' : nudge?.reason || 'Camera updates will appear here when available.'}<a href="/dashboard">See the decision stream →</a></section>}
     <div className="figma-composer">
-      <form onSubmit={e => { e.preventDefault(); void submit(question) }}><img src="/figma/wave.svg" alt="" /><label className="sr-only" htmlFor="question">OR TYPE A QUESTION</label><input id="question" placeholder="Ask a follow-up" value={question} disabled={busy} maxLength={2000} onChange={e => setQuestion(e.target.value)} /><button className={question.trim() ? 'figma-send' : 'sr-only'} aria-label="Send question" disabled={busy || !question.trim()}>↑</button></form>
+      <form onSubmit={e => { e.preventDefault(); void submit(question) }}><img src="/figma/wave.svg" alt="" /><label className="sr-only" htmlFor="question">OR TYPE A QUESTION</label><input id="question" placeholder="Ask a question…" value={question} disabled={busy} maxLength={2000} onChange={e => setQuestion(e.target.value)} /><button className={question.trim() ? 'figma-send' : 'sr-only'} aria-label="Send question" disabled={busy || !question.trim()}>↑</button></form>
       <button className="figma-mic" aria-label={phase === 'listening' ? 'Finish question' : 'Tap to talk'} disabled={phase === 'thinking'} onClick={listen}>{phase === 'listening' ? <span>■</span> : <img src="/figma/mic.svg" alt="" />}</button>
     </div>
     {spoken?.speak && <div className="figma-playback"><p>{spoken.speak}</p>{speaking && <button onClick={stopAudio}>Stop audio</button>}</div>}
@@ -230,16 +230,16 @@ function Dashboard({ session, demo, sessionOnline }: { session: string; demo: bo
   const latency = metrics?.answer_latency_ms_p50 ?? latestAnswer?.latency_ms
   const precision = metrics?.gate_precision
   return <main className="dashboard">
-    <div className="dashboard-heading"><div><p className="eyebrow">BEHIND THE THOUGHT</p><h1>Attention, thoughtfully given.</h1><p>Every decision. Even the ones you never hear.</p></div><span className={'connection ' + (status === 'Connected' || demo ? 'online' : '')}><i />{status}</span></div>
+    <div className="dashboard-heading"><div><p className="eyebrow">Activity</p><h1>Dashboard</h1><p>Live decisions, response times, and session activity.</p></div><span className={'connection ' + (status === 'Connected' || demo ? 'online' : '')}><i />{status}</span></div>
     <div className="metrics-grid">
-      <section className="panel metric"><p>QUESTION → ANSWER <span>↗</span></p><strong>{latency !== undefined ? (latency / 1000).toFixed(2) : '—'}<small>{latency !== undefined ? ' s' : ''}</small></strong><span>{metrics ? 'Median latency · from the brain' : latestAnswer ? 'Latest answer · from the brain' : 'Awaiting an answer from the brain'}</span></section>
-      <section className="panel metric"><p>GATE PRECISION <span>◎</span></p><strong>{precision != null ? Math.round(precision * 100) : '—'}<small>{precision != null ? '%' : ''}</small></strong><span>{precision == null ? 'not measured yet' : metrics?.gate_precision_basis || 'Measurement basis unavailable'}</span></section>
-      <section className="panel metric"><p>SPACE TO THINK <span>○</span></p><strong>{decisions.filter(e => e.level === 'silent').length}<small> / {decisions.length}</small></strong><span>Silent decisions · in this feed’s latest 200 events</span></section>
+      <section className="panel metric"><p>Response time</p><strong>{latency !== undefined ? (latency / 1000).toFixed(2) : '—'}<small>{latency !== undefined ? ' s' : ''}</small></strong><span>{metrics ? 'Median latency · from the brain' : latestAnswer ? 'Latest answer · from the brain' : 'Awaiting an answer from the brain'}</span></section>
+      <section className="panel metric"><p>Gate precision</p><strong>{precision != null ? Math.round(precision * 100) : '—'}<small>{precision != null ? '%' : ''}</small></strong><span>{precision == null ? 'not measured yet' : metrics?.gate_precision_basis || 'Measurement basis unavailable'}</span></section>
+      <section className="panel metric"><p>Silent decisions</p><strong>{decisions.filter(e => e.level === 'silent').length}<small> / {decisions.length}</small></strong><span>Silent decisions · in this feed’s latest 200 events</span></section>
     </div>
     <section className="panel feed-panel"><div className="feed-heading"><div><h2>Decision stream</h2><p>{demo ? 'Scripted examples' : 'Live from the brain'} · {session}</p></div><button className="secondary" onClick={() => { if (!paused) setSnapshot(events); setPaused(!paused) }}>{paused ? 'Resume feed' : 'Pause feed'}</button></div>
       <div className="filters" aria-label="Filter decisions">{['all', 'silent', 'display', 'speak'].map(f => <button key={f} aria-pressed={filter === f} className={filter === f ? 'selected' : ''} onClick={() => setFilter(f)}>{f === 'all' ? 'All events' : f}</button>)}{paused && <span>VIEW PAUSED · still receiving</span>}</div>
-      <div className="feed-table"><div className="feed-row table-labels"><span>TIME</span><span>DECISION</span><span>WHAT IRIS NOTICED / WHY</span></div>
-        {!visible.length && <div className="feed-empty"><span>◎</span><h3>{filter === 'all' ? 'Listening for the first thought.' : 'No matching decisions yet.'}</h3><p>{demo ? 'Sample decisions appear every few seconds.' : 'Start the brain with the same session ID, or enable demo mode to explore.'}</p></div>}
+      <div className="feed-table"><div className="feed-row table-labels"><span>TIME</span><span>DECISION</span><span>DETAILS</span></div>
+        {!visible.length && <div className="feed-empty"><h3>{filter === 'all' ? 'No activity yet' : 'No matching decisions yet.'}</h3><p>{demo ? 'Sample decisions appear every few seconds.' : 'Start the brain with the same session ID, or enable demo mode to explore.'}</p></div>}
         {visible.map((event, i) => <div className="feed-row" key={event.at + i}><time dateTime={event.at}>{new Date(event.at).toLocaleTimeString([], { hour12: false })}</time><span className={'badge ' + (event.level || event.type)}>{event.level || event.type.replace('_', ' ')}</span><div><p>{event.type === 'decision' ? event.text || 'Chose to stay quiet' : event.type === 'answer' ? event.display : event.type === 'answer_delta' ? event.text : event.type === 'memory_saved' ? event.description : 'Metrics updated'}</p><span>{event.reason || event.question || (event.type === 'metrics' ? 'Aggregate metrics received from the brain.' : event.type === 'answer_delta' ? 'Answer streaming · ' + event.ask_id : 'A moment added to memory.')}</span></div></div>)}
       </div>
     </section>
@@ -261,7 +261,7 @@ function OptionsDialog({ open, onClose, children }: { open: boolean; onClose: ()
     onCancel={event => { event.preventDefault(); onClose() }}
     onClick={event => { if (event.target === event.currentTarget) onClose() }}>
     <div className="options-content">
-      <header><div><p>IRIS</p><h2 id="options-title">Your companion</h2></div><button autoFocus aria-label="Close menu" onClick={onClose}>×</button></header>
+      <header><div><p>IRIS</p><h2 id="options-title">Settings</h2></div><button autoFocus aria-label="Close menu" onClick={onClose}>×</button></header>
       {children}
     </div>
   </dialog>
