@@ -1,7 +1,7 @@
 photo,expected_level,question,answer_must_contain,expected_box
 snack_label.jpg,silent,how much protein is in this?,,
 snack_no_label.jpg,silent,how much protein is in this?,,
-whiteboard_mistake.jpg,speak,,,
+whiteboard_mistake.jpg,speak,,56,
 whiteboard_correct.jpg,silent,,,
 empty_desk.jpg,silent,what is this?,,
 person.jpg,silent,,,

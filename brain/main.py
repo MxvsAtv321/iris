@@ -32,6 +32,7 @@ TICK_S, BACKOFF_S = 2, 5       # capture cadence; slower after 3 errors in a row
 LOOP_GAP_S = 6                 # at most one loop model call per 6 s (<=10 RPM, rest kept for questions)
 CHANGE_THRESHOLD = 12          # mean abs grey-level diff (0-255) on a 32x24 thumbnail; calibrate on site
 ASK_TIMEOUT_S = 5
+WATCH_TIMEOUT_S = 12           # per model; the loop can wait, a reasoning watch model may need it
 FALLBACK = "Didn't catch that, try again"
 HERE = Path(__file__).resolve().parent
 STATE = HERE / "state.json"
@@ -178,13 +179,14 @@ async def tick(sid, fid):
     watch["last_call"], watch["ref"] = time.monotonic(), small
 
     s = session(sid)
-    text, model = await llm.chat(llm.messages(prompts.WATCH, prompts.build_watch(s), jpeg))
+    text, model = await llm.chat(llm.messages(prompts.WATCH, prompts.build_watch(s), jpeg),
+                                 model=llm.WATCH, timeout=WATCH_TIMEOUT_S)
     w = llm.parse_json(text)
     if not isinstance(w, dict):
         return await decision(sid, fid, "silent", "bad model output", None)
     box = watch["box"] = gate.to_focus_box(w.get("box_2d"))
     level, reason = gates[sid].decide(w)
-    if model != llm.PRIMARY:
+    if model != llm.WATCH:
         reason += f" [via {model}]"
     if w.get("description"):
         note(s["descriptions"], str(w["description"]))
@@ -233,7 +235,10 @@ def metrics():
         first_word_ms_p50=pct([f for _, f in latencies], 0.5),
         gate_precision=bake.get("gate_precision"),
         gate_precision_basis=bake.get("basis"),  # "measured on N test photos" - label it that way
-        gemini_calls_today=llm.gemini_calls_today(),
+        model_calls_today=llm.calls_today(),
+        model_usd_today=llm.usd_today(),
+        ask_model=llm.PRIMARY,
+        watch_model=llm.WATCH,
     )
 
 

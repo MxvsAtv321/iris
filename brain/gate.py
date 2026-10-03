@@ -40,7 +40,7 @@ def is_echo(text, candidates, threshold=REPEAT_SIM):
 
 
 def to_focus_box(box_2d):
-    """Gemini-style [ymin, xmin, ymax, xmax] on 0-1000 -> [x, y, w, h] fractions, or None."""
+    """[ymin, xmin, ymax, xmax] on 0-1000 (the convention the watch prompt asks for) -> [x, y, w, h] fractions, or None."""
     try:
         ymin, xmin, ymax, xmax = (min(max(float(v) / 1000, 0.0), 1.0) for v in box_2d)
     except (TypeError, ValueError):

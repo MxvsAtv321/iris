@@ -25,6 +25,7 @@ a safety hazard (hot stove left on, knife at the table edge, open bag, oncoming 
 (expired food, wrong platform or gate, a step or obstacle ahead).
 Urgency 5-7: useful but not urgent (a price worth noticing, a name tag, a sign to remember).
 Urgency 0-3: everything ordinary.
+If writing is visible, check every equation and line before deciding; a correct board is urgency 0-3.
 Be specific: name the line and the fix, e.g. text "Line 2: 7x8 is 56", say "Line 2 says seven times eight is fifty-four, it's fifty-six."
 {STYLE}"""
 
@@ -39,7 +40,7 @@ BASE = (
 
 ASK = {
     "ask": BASE + "\nFor food, read the nutrition label if visible and give the per-serving amount; "
-    "otherwise name the product and estimate with 'about'. Prices, ingredients, 'is this vegan', how-to: answer plainly. "
+    "otherwise, if you recognize the product, use its known nutrition facts; else estimate with 'about'. Always give a number. Prices, ingredients, 'is this vegan', how-to: answer plainly. "
     "If you truly cannot tell, say what you need, e.g. 'Turn the label toward me'.",
     "identify": BASE + "\nName the thing as specifically as you can (brand and model if visible), then one useful fact about it.",
     "read": BASE + "\nRead the text in view. Line 1: the gist. Line 2: read out the most important part.",
