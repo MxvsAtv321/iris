@@ -6,7 +6,9 @@ Everyone builds against these shapes. The owner may change their contract: updat
 
 | Call | Result |
 | --- | --- |
-| `GET http://172.20.10.4/capture` | One JPEG from the glasses camera (about 0.16 s). |
+| `GET http://172.20.10.4/capture` | One JPEG from the glasses camera (about 0.2 s at 800x600). |
+| `GET http://172.20.10.4/control?var=<name>&val=<n>` | Changes one camera setting until the camera restarts. The brain sends `framesize` 11 (800x600), `vflip` 0 and `hmirror` 1 at startup and at every session start, from `CAMERA_FRAMESIZE`, `CAMERA_VFLIP` and `CAMERA_HMIRROR`. |
+| `GET http://172.20.10.4/status` | The camera's current settings as JSON. |
 | `GET http://172.20.10.6/show?text=<url-encoded text>` | Shows the text on the glasses display. Under 40 characters stays in the large font. Returns `ok`. |
 | `GET http://172.20.10.6/clear` | Clears the display. Returns `ok`. |
 

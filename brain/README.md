@@ -11,6 +11,8 @@ uvicorn main:app --port 8000                            # run from this folder
 
 Start a session to start the watch loop: `POST /api/session {"session_id": "judge-01"}`.
 
+The camera forgets its frame size and orientation when it restarts, so the brain re-sends `CAMERA_FRAMESIZE`, `CAMERA_VFLIP` and `CAMERA_HMIRROR` from `.env` at startup and at every session start.
+
 ## Act agent (Agentverse / ASI:One)
 
 A second process. It reads what the glasses just saw, then checks the weather and the night sky, recalls a moment, or puts one line on the display.
