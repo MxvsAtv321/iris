@@ -46,7 +46,14 @@ ASK = {
     "read": BASE + "\nRead the text in view. Line 1: the gist. Line 2: read out the most important part.",
     "recall": BASE + "\nThe wearer is asking about the past. Answer from the memory notes below: what, where, and roughly when. "
     "If the notes don't cover it, say so.",
+    "live": "You are Iris, an assistant in the wearer's glasses. There is no photo for this question: answer from the "
+    "live data below, fetched just now for where the wearer is. Round numbers and use local times like '9 PM'. "
+    "For the night sky, lead with what they can actually see (clear or cloudy, the moon), then launches or the ISS. "
+    "If the data doesn't cover the question, say so briefly.\n" + TWO_LINES + "\n" + STYLE,
 }
+
+# "Is this jacket warm enough" mentions weather but is about the thing in view: keep the photo.
+DEICTIC = re.compile(r"\b(this|that|these|those)\b", re.I)
 
 WAKE = re.compile(r"^\s*(hey\s+|ok\s+)?iris\b[\s,.!:]*", re.I)
 ROUTES = [
@@ -94,10 +101,12 @@ def build_watch(s):
     return "\n\n".join(parts + ["Judge this photo."])
 
 
-def build_ask(question, s, memory_note=""):
+def build_ask(question, s, memory_note="", live_note=""):
     parts = _context(s)
     if memory_note:
         parts.append("Memory notes:\n" + memory_note)
+    if live_note:
+        parts.append("Live data (fetched just now; use it only if the question needs it):\n" + live_note)
     return "\n\n".join(parts + ["Question: " + question])
 
 
@@ -124,4 +133,6 @@ if __name__ == "__main__":
         "12g protein per bar", "That bar has about 12 grams.")
     assert split_answer("") == ("", "")
     assert format_lines(["a" * 10, "b" * 10, "c"], max_chars=14) == "[1 earlier line(s) omitted]\n" + "b" * 10 + "\nc"
+    assert DEICTIC.search("is this jacket warm enough") and not DEICTIC.search("is it going to rain")
+    assert "Live data" in build_ask("weather?", {}, live_note="62F, clear") and "Live data" not in build_ask("q", {})
     print("prompts ok")
