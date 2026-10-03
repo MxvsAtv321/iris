@@ -27,7 +27,6 @@ export default defineConfig({
         EMBED_MODEL: process.env.EMBED_MODEL ?? "text-embedding-3-small",
         INGEST_TOKEN: process.env.INGEST_TOKEN ?? "",
         VISION_MODEL: process.env.VISION_MODEL ?? "gpt-4o-mini",
-        TEXT_MODEL: process.env.TEXT_MODEL ?? "gpt-4o-mini",
         DESCRIBE_URL: process.env.DESCRIBE_URL ?? "",
         DEDUPE_THRESHOLD: process.env.DEDUPE_THRESHOLD ?? "0.95",
         SEARCH_MIN_SIMILARITY: process.env.SEARCH_MIN_SIMILARITY ?? "0.30",

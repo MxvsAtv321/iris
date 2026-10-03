@@ -167,7 +167,7 @@ def main() -> int:
             took = time.monotonic() - started
             flat = r.json() if "json" in r.headers.get("content-type", "") else {}
             check("brain answers POST /api/memory/search", r.status_code == 200, f"HTTP {r.status_code}, {took:.1f}s",
-                  "include the memory router in the brain: app.include_router(router) from brain.memory, "
+                  "include the memory router in the brain: app.include_router(router) after from memory import router, "
                   "and make sure the tunnel sends /api to the brain")
             check("answer is the flat shape", {"found", "moment_id", "description", "captured_at"} <= set(flat),
                   ", ".join(sorted(flat)) or "not JSON")

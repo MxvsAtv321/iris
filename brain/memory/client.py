@@ -4,7 +4,7 @@ Client for the Iris memory API on Neon.
 The brain uses two calls, and neither ever raises, so memory can't break the
 brain. A failed or slow call logs a warning and returns an empty result.
 
-    from brain.memory import MemoryClient
+    from memory import MemoryClient
     memory = MemoryClient()
 
     # after describing a frame

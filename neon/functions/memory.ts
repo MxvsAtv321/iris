@@ -54,14 +54,12 @@ function openai(): OpenAI {
 
 const EMBED_MODEL = process.env.EMBED_MODEL || "text-embedding-3-small"; // must produce 1536 dimensions to match the table
 const VISION_MODEL = process.env.VISION_MODEL || "gpt-4o-mini";
-const TEXT_MODEL = process.env.TEXT_MODEL || "gpt-4o-mini";
 const DEDUPE_THRESHOLD = Number(process.env.DEDUPE_THRESHOLD || "0.95");
 const MIN_SIMILARITY = Number(process.env.SEARCH_MIN_SIMILARITY || "0.30");
 const MAX_IMAGE_BYTES = 2_000_000;
 
-// Time budgets. Callers give up at 4 s for search and 8 s for ingest, so
-// each model call here has to finish well inside that.
-const TARGET_TIMEOUT_MS = 1_500; // on timeout, search guesses the target from the words instead
+// Time budgets. Search is one embedding call and one query, so it answers well
+// inside the brain's 2 s budget. Ingest gives up within 8 s.
 const SEARCH_EMBED_TIMEOUT_MS = 1_500;
 const DESCRIBE_TIMEOUT_MS = 3_000; // only used when the brain didn't send a description
 const INGEST_EMBED_TIMEOUT_MS = 2_000;
@@ -73,11 +71,6 @@ const DESCRIBE_PROMPT =
   "First list every clearly visible object using plain everyday names " +
   "(phone, keys, laptop, water bottle). Then write one sentence on where this " +
   "is and what is happening. No speculation.";
-
-const TARGET_PROMPT =
-  "Someone wearing smart glasses is asking about something they saw earlier. " +
-  'Reply with JSON only, shaped like {"target": "phone"}. The target is the ' +
-  "object or thing they want to find, in 1 to 4 plain words, no articles.";
 
 // ---------------------------------------------------------------- object storage
 
@@ -188,36 +181,17 @@ const STOPWORDS = new Set(
   "where what when which did do does is are was were i me my mine the a an our we you it its last see saw seen put leave left lose lost find found have had has can could would should please i'd i've where's what's".split(" "),
 );
 
-/** Pulls the object out of the question without a model, for when the model is slow or down. */
+/** Pulls the object out of the question with no model call, so search stays fast. */
+// Words that trail the object in a question ("my keys last night") but aren't part of it.
+const TRAILING = /\s+(?:earlier|today|tonight|yesterday|last|just|again|before|recently|this|that|ago|now|please)\b.*$/;
+
 export function guessTarget(question: string): string {
-  const q = question.toLowerCase().replace(/[?!.,]/g, " ").replace(/\s+/g, " ").trim();
+  const q = question.toLowerCase().replace(/[?!.,']/g, (m) => (m === "'" ? "'" : " ")).replace(/\s+/g, " ").trim();
   // "...my phone", "...the water bottle is", "...our keys at"
   const after = q.match(/\b(?:my|the|our|a|an)\s+([a-z0-9][a-z0-9 ]{0,40}?)(?:\s+(?:is|are|was|were|at|in|on|go|went)\b|$)/);
-  if (after) return after[1].trim();
+  if (after) return after[1].replace(TRAILING, "").trim() || after[1].trim();
   const words = q.split(" ").filter((w) => w && !STOPWORDS.has(w));
   return words.slice(-2).join(" ") || q;
-}
-
-async function extractTarget(question: string): Promise<string> {
-  try {
-    const resp = await openai().chat.completions.create(
-      {
-        model: TEXT_MODEL,
-        max_tokens: 30,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: TARGET_PROMPT },
-          { role: "user", content: question },
-        ],
-      },
-      { timeout: TARGET_TIMEOUT_MS },
-    );
-    const target = JSON.parse(resp.choices[0]?.message?.content ?? "{}").target;
-    if (typeof target === "string" && target.trim()) return target.trim().toLowerCase();
-  } catch (err) {
-    console.error("[search] target model failed or was too slow, guessing the target instead", err);
-  }
-  return guessTarget(question);
 }
 
 async function embed(text: string, timeoutMs: number): Promise<number[]> {
@@ -328,8 +302,9 @@ app.post("/search", async (c) => {
 
   const started = Date.now();
   try {
-    // Callers that already know the object (the brain) can pass it and skip a model call.
-    const target = typeof body.target === "string" && body.target.trim() ? body.target.trim() : await extractTarget(question);
+    // One embedding call and one query, so search fits the brain's 2 s budget.
+    // The object comes from the question's words (or the caller's target), not a model.
+    const target = typeof body.target === "string" && body.target.trim() ? body.target.trim() : guessTarget(question);
     const embedding = await embed(`a photo with ${target} in it`, SEARCH_EMBED_TIMEOUT_MS);
 
     const { rows } = await pool.query<Candidate>(

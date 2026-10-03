@@ -1,7 +1,7 @@
 """
 The brain's side of memory, in the shape the brain already calls.
 
-    from brain.memory import save_moment
+    from memory import save_moment
     moment_id = save_moment(session_id, captured_at, image_jpeg_bytes, description)
 
 save_moment wraps ingest. It returns the new moment's id (an int), or None when

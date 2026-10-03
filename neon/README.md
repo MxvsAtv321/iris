@@ -35,13 +35,13 @@ Memory uses the team's Neon project, `delicate-cherry-79336457`, on its `product
 
 `neon.ts` declares `functions` and `buckets` at the top level. Some Neon templates put them under `preview:`, but that's deprecated since `@neon/config` 1.6.0 and this project pins 1.8, so no `preview:` block is needed. `npm run deploy` writes the branch's credentials to `neon/.env.local`, which is gitignored.
 
-**Per-judge sessions with Neon Auth.** When a page sends a signed-in judge's Neon Auth token as `Authorization: Bearer <token>`, the memory function verifies it and uses that judge's user id as the session, so a judge can only ever reach their own memories. Without a token, requests use the `session_id` they name, which is how the brain and image links work. To use it end to end, the phone page signs judges in with Neon Auth, passes the token on memory calls, and gives the brain the judge's user id as the session id.
+**Neon Auth is enabled but not used yet.** Pages pass a plain `session_id`, and no page signs judges in. The memory function is ready for it, though. If a request ever carries a signed-in judge's Neon Auth token as `Authorization: Bearer <token>`, the function verifies it and uses that judge's user id as the session. Requests without a token, which is every request today, use the `session_id` they name.
 
 ## Wiring it into the brain
 
-    from brain.memory import save_moment, router as memory_router
+    from memory import save_moment, router    # the brain runs from brain/
 
-    app.include_router(memory_router)      # serves POST /api/memory/search
+    app.include_router(router)                # serves POST /api/memory/search
 
     moment_id = save_moment(session_id, captured_at, image_jpeg_bytes, description)
 
@@ -97,7 +97,7 @@ It checks the garden loading over HTTPS against the right memory address, the me
 
 ## Timeouts
 
-Callers give up fast so a slow model never stalls the brain. Search times out at 4 s and ingest at 8 s in the Python client, and every garden request gives up at 4 s. Inside the function, every OpenAI call stops after about 3 s with no retries. If the model that pulls "phone" out of the question is slow, search guesses the object from the question's words instead, so it still answers.
+Search is one embedding call and one database query, so it answers well inside the brain's 2 s budget, usually in a few hundred milliseconds. The object being asked about ("phone" in "where did I leave my phone?") comes from the question's words, with no model call. If the embedding service hangs, search gives up at about 1.5 s. Ingest gives up within 8 s. The Python client's limits are 4 s for search and 8 s for ingest, every garden request gives up at 4 s, and every OpenAI call inside the function stops after about 3 s with no retries.
 
 ## Tuning
 

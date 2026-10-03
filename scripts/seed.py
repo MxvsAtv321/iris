@@ -17,8 +17,9 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from brain.memory import MemoryClient  # noqa: E402
+# Same import the brain uses, which runs from brain/.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "brain"))
+from memory import MemoryClient  # noqa: E402
 
 DEFAULT_QUESTIONS = [
     "where did I leave my phone?",

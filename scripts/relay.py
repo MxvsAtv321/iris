@@ -19,8 +19,9 @@ from pathlib import Path
 
 import httpx
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from brain.memory import MemoryClient  # noqa: E402
+# Same import the brain uses, which runs from brain/.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "brain"))
+from memory import MemoryClient  # noqa: E402
 
 # CAMERA_URL in the team .env is the camera's base address. Use the IP, not
 # glasses-cam.local, which adds about five seconds per request on a Mac.

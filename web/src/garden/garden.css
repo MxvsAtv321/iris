@@ -7,6 +7,23 @@
    look, change the values here, keeping hex or rgb() so the 3D side can read
    them. */
 
+/* The garden's font, bundled in public/fonts (the same files the 3D labels use),
+   so nothing loads from a font CDN. Declaring a face styles nothing by itself. */
+@font-face {
+  font-family: "Literata";
+  src: url("/fonts/literata-latin-400-normal.woff") format("woff");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Literata";
+  src: url("/fonts/literata-latin-600-normal.woff") format("woff");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
 .garden {
   --dusk: #241f3d;
   --dusk-deep: #14122a;
