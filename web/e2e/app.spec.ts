@@ -44,7 +44,7 @@ test('mobile demo is clearly labeled and does not overflow', async ({ page }) =>
   await page.goto('/phone')
   await page.getByRole('button', { name: 'More options' }).click()
   await page.getByLabel('Demo mode').check()
-  await page.getByRole('button', { name: 'More options' }).click()
+  await page.getByRole('button', { name: 'Close menu' }).click()
   await expect(page.getByText('DEMO MODE · Scripted examples', { exact: false })).toBeVisible()
   await page.getByLabel('OR TYPE A QUESTION').fill('What is this?')
   await page.getByRole('button', { name: 'Send question' }).click()

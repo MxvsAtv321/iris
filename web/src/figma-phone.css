@@ -2,9 +2,6 @@
 body:has(.phone-shell){background:#05050a}
 .phone-shell{max-width:none;padding:0;min-height:100dvh;background:radial-gradient(ellipse 260px 600px at 50% 250px,#171329 0%,#080811 42%,#05050a 100%);color:#f7f5ff;font-family:Inter,ui-sans-serif,system-ui,sans-serif}
 .phone-shell>.topbar,.phone-shell>.session-bar,.phone-shell>footer,.phone-shell>.demo-banner{display:none}
-.phone-shell.settings-open>.topbar{display:flex;max-width:440px;margin:auto;padding:10px 20px;height:auto;flex-wrap:wrap;border-color:#ffffff14}
-.phone-shell.settings-open>.topbar .brand{display:none}
-.phone-shell.settings-open>.session-bar{display:flex;max-width:440px;margin:auto;padding:12px 20px;color:#c6b3ff}
 .phone-shell .session-bar input:not([type=checkbox]){color:#f7f5ff;border-color:#c6b3ff55}
 .phone-shell .session-bar button{color:#c6b3ff}
 .phone-shell input[type=checkbox]{accent-color:#9a78ff}
@@ -62,3 +59,28 @@ body:has(.phone-shell){background:#05050a}
 @media(max-width:360px){.figma-phone{padding-left:14px;padding-right:14px}.figma-context{gap:8px}.figma-product,.figma-context-placeholder{width:90px;height:104px}.figma-recognition{font-size:8px}.figma-amount{width:94px}}
 .figma-phone img{max-width:none}
 .app-shell.phone-shell{padding:0;max-width:none}.figma-phone{padding-top:calc(69px + env(safe-area-inset-top,0px))}
+
+.options-dialog{position:fixed;inset:0;margin:auto;width:min(420px,calc(100vw - 32px));max-height:calc(100dvh - 48px);padding:0;overflow:auto;color:#f7f5ff;background:#100e1c;border:1px solid #b9a4ff33;border-radius:24px;box-shadow:0 24px 90px #000a}
+.options-dialog::backdrop{background:#030208b8;backdrop-filter:blur(8px)}
+.options-content{padding:24px;display:grid;gap:24px}
+.options-content>header{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.options-content header p{font-size:10px;letter-spacing:2px;color:#c6b3ff;margin-bottom:6px}
+.options-content h2{font-size:22px}
+.options-content header button{width:44px;height:44px;border-radius:50%;background:#ffffff0a;color:#c6b3ff;font-size:28px}
+.options-navigation{display:grid;gap:10px}
+.options-navigation a{padding:16px;border:1px solid #ffffff14;border-radius:16px;background:#ffffff04;font-size:15px}
+.options-navigation a:hover{background:#c6b3ff12;border-color:#c6b3ff55}
+.options-navigation span{display:block;margin-top:6px;font-size:12px;color:#9995ab}
+.options-dialog .session-bar{display:grid;gap:16px;padding:0;font-size:12px}
+.options-dialog .session-bar form{display:grid;grid-template-columns:1fr auto;gap:10px}
+.options-dialog .session-bar label[for=session]{grid-column:1/-1;letter-spacing:1px}
+.options-dialog .session-bar input:not([type=checkbox]){width:100%;padding:12px;background:#05050a;border:1px solid #ffffff20;border-radius:10px;color:#f7f5ff}
+.options-dialog .session-bar button{padding:12px;background:#c6b3ff18;border-radius:10px;color:#c6b3ff}
+.options-dialog .figma-extra{margin:0}
+.garden-route>.topbar,.garden-route>.session-bar,.garden-route>footer{display:none}
+.garden-route .garden{top:calc(64px + env(safe-area-inset-top,0px))}
+.garden-navigation{position:fixed;top:0;left:0;right:0;z-index:30;height:calc(64px + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) max(16px,env(safe-area-inset-right,0px)) 0 max(16px,env(safe-area-inset-left,0px));display:flex;align-items:center;justify-content:space-between;gap:12px;background:#100e1cf2;border-bottom:1px solid #c6b3ff22;color:#c6b3ff}
+.garden-navigation a{display:flex;align-items:center;min-height:44px;font-size:13px;padding:0 10px;border-radius:12px}
+.garden-navigation a:hover{background:#c6b3ff12}
+.garden-navigation>span{font-size:10px;letter-spacing:2px;color:#9995ab}
+@media(max-width:480px){.garden-navigation>span{display:none}.options-content{padding:20px}}

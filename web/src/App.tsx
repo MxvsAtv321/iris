@@ -1,10 +1,11 @@
-import { Suspense, lazy, useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from 'react'
 import { SafeBoundary } from './garden/SafeBoundary'
 const Garden = lazy(() => import('./garden/Garden').then(module => ({ default: module.Garden })))
-import { ask, stripWakeWord, type Answer } from './api'
+import { ask, startSession, stripWakeWord, type Answer } from './api'
 import { useFeed } from './useFeed'
 import { speechRecognition, type Recognition } from './voice'
 import IrisVisual from './IrisVisual'
+import { EventSpeech } from './eventSpeech'
 import { AudioLevel } from './audioLevel'
 import './figma-phone.css'
 
@@ -14,6 +15,15 @@ function initialSession() {
 }
 export default function App() {
   const [session, setSession] = useState(initialSession)
+  const [sessionOnline, setSessionOnline] = useState(false)
+  useEffect(() => {
+    const controller = new AbortController()
+    setSessionOnline(false)
+    void startSession(session, controller.signal).then(ok => {
+      if (!controller.signal.aborted) setSessionOnline(ok)
+    })
+    return () => controller.abort()
+  }, [session])
   const [draft, setDraft] = useState(session)
   const [demo, setDemo] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -25,22 +35,23 @@ export default function App() {
     setSession(next)
     try { localStorage.setItem('iris-session', next) } catch { /* Session still works without storage. */ }
   }
-  return <div className={`app-shell ${!dashboard && !garden ? "phone-shell" : ""} ${settingsOpen ? "settings-open" : ""}`}>
+  const sessionControls = <div className="session-bar"><form onSubmit={e => { e.preventDefault(); changeSession() }}><label htmlFor="session">SESSION</label><input id="session" value={draft} maxLength={80} onChange={e => setDraft(e.target.value)} /><button disabled={!draft.trim() || draft.trim() === session}>Apply</button></form>
+      <label className="demo-toggle"><input type="checkbox" checked={demo} onChange={e => setDemo(e.target.checked)} /> Demo mode</label>
+    </div>
+  return <div className={`app-shell ${!dashboard && !garden ? "phone-shell" : ""} ${garden ? "garden-route" : ""}`}>
     <header className="topbar"><a className="brand" href="/phone"><span className="identity-slot"><img src="/figma/identity.svg" alt="" /></span><span className="brand-copy"><strong>IRIS</strong><small>VISUAL INTELLIGENCE</small></span></a>
       <nav aria-label="Main navigation"><a className={!dashboard && !garden ? 'active' : ''} href="/phone">Companion</a><a className={dashboard ? 'active' : ''} href="/dashboard">Dashboard</a><a className={garden ? 'active' : ''} href={`/garden?session=${encodeURIComponent(session)}`}>Garden</a></nav>
       <span className="edition">MHACKS ’26 <span> / </span> SEE · REMEMBER · ACT</span>
     </header>
-    <div className="session-bar"><form onSubmit={e => { e.preventDefault(); changeSession() }}><label htmlFor="session">SESSION</label><input id="session" value={draft} maxLength={80} onChange={e => setDraft(e.target.value)} /><button disabled={!draft.trim() || draft.trim() === session}>Apply</button></form>
-      <label className="demo-toggle"><input type="checkbox" checked={demo} onChange={e => setDemo(e.target.checked)} /> Demo mode</label>
-    </div>
+    {(dashboard) && sessionControls}
     {demo && (dashboard || garden) && <div className="demo-banner">DEMO MODE · Scripted examples, no camera or brain connection. Answers are not observations.</div>}
+    {garden && <nav className="garden-navigation" aria-label="Garden navigation"><a href="/phone">← Companion</a><span>MEMORY GARDEN</span><a href="/dashboard">Dashboard →</a></nav>}
     {garden ? <SafeBoundary fallback={<main className="empty-page"><h1>The garden could not load.</h1><p>Try reloading, or return to the companion.</p><a href="/phone">Back to companion →</a></main>}><Suspense fallback={<main className="empty-page" role="status">Opening your memory garden…</main>}><Garden /></Suspense></SafeBoundary> :
-      dashboard ? <Dashboard key={session + demo} session={session} demo={demo} /> : <Phone key={session + demo} session={session} demo={demo} settingsOpen={settingsOpen} onSettings={() => setSettingsOpen(!settingsOpen)} />}
+      dashboard ? <Dashboard key={session + demo} session={session} demo={demo} sessionOnline={sessionOnline} /> : <Phone key={session + demo} session={session} demo={demo} sessionOnline={sessionOnline} menu={sessionControls} settingsOpen={settingsOpen} onSettings={() => setSettingsOpen(!settingsOpen)} />}
     <footer><span>KEEP YOUR GLASSES. SEE A LITTLE MORE.</span><span>IRIS / MHACKS 2026</span></footer>
   </div>
 }
-function Phone({ session, demo, settingsOpen, onSettings }: { session: string; demo: boolean; settingsOpen: boolean; onSettings: () => void }) {
-  const { events, status } = useFeed(session, demo)
+function Phone({ session, demo, sessionOnline, menu, settingsOpen, onSettings }: { session: string; demo: boolean; sessionOnline: boolean; menu: ReactNode; settingsOpen: boolean; onSettings: () => void }) {
   const [phase, setPhase] = useState<Phase>('idle')
   const [question, setQuestion] = useState('')
   const [answer, setAnswer] = useState<Answer | null>(null)
@@ -51,19 +62,32 @@ function Phone({ session, demo, settingsOpen, onSettings }: { session: string; d
   const [wakeWord, setWakeWord] = useState(false)
   const [speaking, setSpeaking] = useState(false)
   const [audioLevel] = useState(() => new AudioLevel())
+  const speaker = useRef<EventSpeech | null>(null)
+  const { events, status: feedStatus } = useFeed(session, demo, event => speaker.current?.receive(event))
+  const status = demo ? feedStatus : !sessionOnline ? 'Offline · session unavailable' : feedStatus
+  useEffect(() => {
+    const voice = new EventSpeech(audioLevel, setSpeaking, setVoiceNote)
+    speaker.current = voice
+    window.addEventListener('pointerdown', voice.unlock)
+    window.addEventListener('keydown', voice.unlock)
+    return () => {
+      window.removeEventListener('pointerdown', voice.unlock)
+      window.removeEventListener('keydown', voice.unlock)
+      voice.dispose()
+      speaker.current = null
+    }
+  }, [audioLevel])
   const recognition = useRef<Recognition | null>(null)
   const request = useRef<AbortController | null>(null)
   const micTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const demoTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const audioTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const alive = useRef(true)
   const busy = phase === 'thinking' || phase === 'listening'
   useEffect(() => {
     alive.current = true
     return () => {
       alive.current = false; recognition.current?.abort(); request.current?.abort(); audioLevel.dispose()
-      clearTimeout(micTimer.current); clearTimeout(demoTimer.current); clearTimeout(audioTimer.current)
-      window.speechSynthesis?.cancel()
+      clearTimeout(micTimer.current); clearTimeout(demoTimer.current)
     }
   }, [audioLevel])
   useEffect(() => {
@@ -83,24 +107,7 @@ function Phone({ session, demo, settingsOpen, onSettings }: { session: string; d
     document.addEventListener('visibilitychange', acquire)
     return () => { disposed = true; void lock?.release(); document.removeEventListener('visibilitychange', acquire) }
   }, [])
-  function stopAudio() {
-    clearTimeout(audioTimer.current); window.speechSynthesis?.cancel(); audioLevel.stop(); setSpeaking(false)
-  }
-  function play(text: string) {
-    stopAudio()
-    if (!text) return
-    if (!window.speechSynthesis) { setVoiceNote('Audio is unavailable here. Your answer is shown below.'); return }
-    const utterance = new SpeechSynthesisUtterance(text)
-    utterance.rate = 0.98
-    utterance.onend = () => { clearTimeout(audioTimer.current); if (alive.current) { audioLevel.stop(); setSpeaking(false) } }
-    utterance.onerror = () => { clearTimeout(audioTimer.current); if (alive.current) { audioLevel.stop(); setSpeaking(false); setVoiceNote('Audio could not play. Tap “Play answer” to retry.') } }
-    utterance.onstart = () => { if (alive.current) { audioLevel.speechStart(); setSpeaking(true) } }
-    utterance.onboundary = () => audioLevel.speechBoundary()
-    window.speechSynthesis.speak(utterance)
-    audioTimer.current = setTimeout(() => {
-      if (alive.current) { stopAudio(); setVoiceNote('Playback stopped. You can replay the answer below.') }
-    }, 30000)
-  }
+  function stopAudio() { speaker.current?.stop(); audioLevel.stop(); setSpeaking(false) }
   async function submit(text: string) {
     const clean = text.trim()
     if (!clean || request.current) return
@@ -108,7 +115,7 @@ function Phone({ session, demo, settingsOpen, onSettings }: { session: string; d
     const controller = new AbortController()
     request.current = controller
     const started = performance.now()
-    const timeout = setTimeout(() => controller.abort(), 25000)
+    const timeout = setTimeout(() => controller.abort(), 8000)
     try {
       let result: Answer
       if (demo) {
@@ -118,7 +125,6 @@ function Phone({ session, demo, settingsOpen, onSettings }: { session: string; d
       } else result = await ask(session, clean, controller.signal)
       if (!alive.current) return
       setAnswer(result); setLatency(Math.round(performance.now() - started)); setPhase('answering')
-      if (result.level === 'speak' && result.speak) play(result.speak)
     } catch (err) {
       if (!alive.current) return
       setError(controller.signal.aborted ? 'The brain took too long. Check the connection and try again.' : err instanceof Error ? err.message : 'Could not reach the brain. Try again.')
@@ -159,6 +165,8 @@ function Phone({ session, demo, settingsOpen, onSettings }: { session: string; d
     try { mic.start(); micTimer.current = setTimeout(() => mic.stop(), 20000) }
     catch { audioLevel.stop(); recognition.current = null; setPhase('error'); setError('Microphone could not start. Try again or type below.') }
   }
+  const streamed = events.find(e => e.type === 'answer_delta')
+  const spoken = events.find(e => (e.type === 'answer' || e.type === 'decision' && e.level === 'speak') && e.speak?.trim())
   const nudge = events.find(e => e.type === 'decision' && e.level !== 'silent')
   const [detailsOpen, setDetailsOpen] = useState(false)
   const sample = demo && !answer
@@ -179,7 +187,7 @@ function Phone({ session, demo, settingsOpen, onSettings }: { session: string; d
     <h1 className="sr-only" aria-live="polite">{phase === 'answering' ? 'Here’s what I found.' : phase === 'thinking' ? 'Taking a closer look.' : phase === 'listening' ? 'I’m listening.' : 'Iris visual assistant'}</h1>
     <section className={'figma-answer ' + (!(protein || sample) ? 'general-answer' : '')} aria-label="Answer" aria-live="polite">
       {(protein || sample) && <div className="figma-amount"><strong>{protein || '12'} g</strong><span>PROTEIN</span></div>}
-      <div className="figma-answer-copy"><p>{sample ? 'About 24% of your daily target in one bar.' : answer?.display || 'Ask about what’s in front of you.'}</p>
+      <div className="figma-answer-copy"><p>{sample ? 'About 24% of your daily target in one bar.' : (phase === 'thinking' ? streamed?.text : answer?.display) || 'Ask about what’s in front of you.'}</p>
         <span className="figma-confidence">{demo && <img src="/figma/badge.svg" alt="" />}{sample ? '96% label confidence · sample' : answer ? (demo ? 'Scripted demo answer' : latency + ' ms · answer time') : 'A little help, right when you need it.'}</span>
       </div>
     </section>
@@ -196,16 +204,21 @@ function Phone({ session, demo, settingsOpen, onSettings }: { session: string; d
       <form onSubmit={e => { e.preventDefault(); void submit(question) }}><img src="/figma/wave.svg" alt="" /><label className="sr-only" htmlFor="question">OR TYPE A QUESTION</label><input id="question" placeholder="Ask a follow-up" value={question} disabled={busy} maxLength={2000} onChange={e => setQuestion(e.target.value)} /><button className={question.trim() ? 'figma-send' : 'sr-only'} aria-label="Send question" disabled={busy || !question.trim()}>↑</button></form>
       <button className="figma-mic" aria-label={phase === 'listening' ? 'Finish question' : 'Tap to talk'} disabled={phase === 'thinking'} onClick={listen}>{phase === 'listening' ? <span>■</span> : <img src="/figma/mic.svg" alt="" />}</button>
     </div>
-    {answer?.speak && <div className="figma-playback"><p>{answer.speak}</p><button onClick={() => speaking ? stopAudio() : play(answer.speak)}>{speaking ? 'Stop audio' : 'Play answer'}</button></div>}
+    {spoken?.speak && <div className="figma-playback"><p>{spoken.speak}</p>{speaking && <button onClick={stopAudio}>Stop audio</button>}</div>}
     {error && <div role="alert" className="error-box">{error}{question.trim() && <button disabled={busy} onClick={() => void submit(question)}>Retry question</button>}</div>}
     {voiceNote && <p className="figma-note" role="status">{voiceNote}</p>}
-    {settingsOpen && <section className="figma-extra"><label className="wake-option"><input type="checkbox" checked={wakeWord} disabled={busy} onChange={e => setWakeWord(e.target.checked)} /> Start with “Iris” after tapping</label><p>{wake}</p><p>Voice uses browser speech services. Listening ends after each question.</p><p>{status} · {session}</p></section>}
+    <OptionsDialog open={settingsOpen} onClose={onSettings}>
+      <nav className="options-navigation" aria-label="Page navigation"><a href="/dashboard">Dashboard <span>Decisions and live metrics →</span></a><a href={'/garden?session=' + encodeURIComponent(session)}>Memory garden <span>Revisit a moment →</span></a></nav>
+      {menu}
+      <section className="figma-extra"><label className="wake-option"><input type="checkbox" checked={wakeWord} disabled={busy} onChange={e => setWakeWord(e.target.checked)} /> Start with “Iris” after tapping</label><p>{wake}</p><p>Voice uses browser speech services. Listening ends after each question.</p><p>{status} · {session}</p></section>
+    </OptionsDialog>
     {demo && <p className="figma-demo-note">DEMO MODE · Scripted examples, no camera or brain connection. Answers are not observations.</p>}
   </main>
 }
 
-function Dashboard({ session, demo }: { session: string; demo: boolean }) {
-  const { events, status } = useFeed(session, demo)
+function Dashboard({ session, demo, sessionOnline }: { session: string; demo: boolean; sessionOnline: boolean }) {
+  const { events, status: feedStatus } = useFeed(session, demo)
+  const status = demo ? feedStatus : !sessionOnline ? 'Offline · session unavailable' : feedStatus
   const [filter, setFilter] = useState('all')
   const [paused, setPaused] = useState(false)
   const [snapshot, setSnapshot] = useState(events)
@@ -220,16 +233,36 @@ function Dashboard({ session, demo }: { session: string; demo: boolean }) {
     <div className="dashboard-heading"><div><p className="eyebrow">BEHIND THE THOUGHT</p><h1>Attention, thoughtfully given.</h1><p>Every decision. Even the ones you never hear.</p></div><span className={'connection ' + (status === 'Connected' || demo ? 'online' : '')}><i />{status}</span></div>
     <div className="metrics-grid">
       <section className="panel metric"><p>QUESTION → ANSWER <span>↗</span></p><strong>{latency !== undefined ? (latency / 1000).toFixed(2) : '—'}<small>{latency !== undefined ? ' s' : ''}</small></strong><span>{metrics ? 'Median latency · from the brain' : latestAnswer ? 'Latest answer · from the brain' : 'Awaiting an answer from the brain'}</span></section>
-      <section className="panel metric"><p>GATE PRECISION <span>◎</span></p><strong>{precision !== undefined ? Math.round(precision * 100) : '—'}<small>{precision !== undefined ? '%' : ''}</small></strong><span>Correct interruptions / labeled interruptions</span></section>
+      <section className="panel metric"><p>GATE PRECISION <span>◎</span></p><strong>{precision != null ? Math.round(precision * 100) : '—'}<small>{precision != null ? '%' : ''}</small></strong><span>{precision == null ? 'not measured yet' : metrics?.gate_precision_basis || 'Measurement basis unavailable'}</span></section>
       <section className="panel metric"><p>SPACE TO THINK <span>○</span></p><strong>{decisions.filter(e => e.level === 'silent').length}<small> / {decisions.length}</small></strong><span>Silent decisions · in this feed’s latest 200 events</span></section>
     </div>
     <section className="panel feed-panel"><div className="feed-heading"><div><h2>Decision stream</h2><p>{demo ? 'Scripted examples' : 'Live from the brain'} · {session}</p></div><button className="secondary" onClick={() => { if (!paused) setSnapshot(events); setPaused(!paused) }}>{paused ? 'Resume feed' : 'Pause feed'}</button></div>
       <div className="filters" aria-label="Filter decisions">{['all', 'silent', 'display', 'speak'].map(f => <button key={f} aria-pressed={filter === f} className={filter === f ? 'selected' : ''} onClick={() => setFilter(f)}>{f === 'all' ? 'All events' : f}</button>)}{paused && <span>VIEW PAUSED · still receiving</span>}</div>
       <div className="feed-table"><div className="feed-row table-labels"><span>TIME</span><span>DECISION</span><span>WHAT IRIS NOTICED / WHY</span></div>
         {!visible.length && <div className="feed-empty"><span>◎</span><h3>{filter === 'all' ? 'Listening for the first thought.' : 'No matching decisions yet.'}</h3><p>{demo ? 'Sample decisions appear every few seconds.' : 'Start the brain with the same session ID, or enable demo mode to explore.'}</p></div>}
-        {visible.map((event, i) => <div className="feed-row" key={event.at + i}><time dateTime={event.at}>{new Date(event.at).toLocaleTimeString([], { hour12: false })}</time><span className={'badge ' + (event.level || event.type)}>{event.level || event.type.replace('_', ' ')}</span><div><p>{event.type === 'decision' ? event.text || 'Chose to stay quiet' : event.type === 'answer' ? event.display : event.type === 'memory_saved' ? event.description : 'Metrics updated'}</p><span>{event.reason || event.question || (event.type === 'metrics' ? 'Aggregate metrics received from the brain.' : 'A moment added to memory.')}</span></div></div>)}
+        {visible.map((event, i) => <div className="feed-row" key={event.at + i}><time dateTime={event.at}>{new Date(event.at).toLocaleTimeString([], { hour12: false })}</time><span className={'badge ' + (event.level || event.type)}>{event.level || event.type.replace('_', ' ')}</span><div><p>{event.type === 'decision' ? event.text || 'Chose to stay quiet' : event.type === 'answer' ? event.display : event.type === 'answer_delta' ? event.text : event.type === 'memory_saved' ? event.description : 'Metrics updated'}</p><span>{event.reason || event.question || (event.type === 'metrics' ? 'Aggregate metrics received from the brain.' : event.type === 'answer_delta' ? 'Answer streaming · ' + event.ask_id : 'A moment added to memory.')}</span></div></div>)}
       </div>
     </section>
-    <p className="dashboard-note">Precision is reported by the backend from labeled decisions; it is never inferred from how often Iris speaks. Feed data is held in this tab, up to 200 events.</p>
+    <p className="dashboard-note">Precision is reported by the backend from test photos; it is never inferred from how often Iris speaks. Feed data is held in this tab, up to 200 events.</p>
   </main>
+}
+
+function OptionsDialog({ open, onClose, children }: { open: boolean; onClose: () => void; children: ReactNode }) {
+  const dialog = useRef<HTMLDialogElement>(null)
+  useEffect(() => {
+    const element = dialog.current!
+    if (!open) { element.close(); return }
+    const overflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    element.showModal()
+    return () => { element.close(); document.body.style.overflow = overflow }
+  }, [open])
+  return <dialog ref={dialog} className="options-dialog" aria-labelledby="options-title"
+    onCancel={event => { event.preventDefault(); onClose() }}
+    onClick={event => { if (event.target === event.currentTarget) onClose() }}>
+    <div className="options-content">
+      <header><div><p>IRIS</p><h2 id="options-title">Your companion</h2></div><button autoFocus aria-label="Close menu" onClick={onClose}>×</button></header>
+      {children}
+    </div>
+  </dialog>
 }

@@ -76,3 +76,95 @@ describe('iris audio meter', () => {
     expect(disconnect).toHaveBeenCalledTimes(2)
   })
 })
+
+import { appendEvent, startSession, type IrisEvent } from './api'
+import { EventSpeech } from './eventSpeech'
+
+const eventBase = { session_id: 'tests', at: '2026-10-03T19:02:11Z' }
+describe('current Brain events', () => {
+  it('accepts nullable metrics and retains model and measurement fields', () => {
+    const metrics = { ...eventBase, type: 'metrics', gate_precision: null, answer_latency_ms_p50: null,
+      gate_precision_basis: null, model_calls_today: 112, model_usd_today: 0.41, ask_model: 'ask', watch_model: 'watch' }
+    expect(parseEvent(JSON.stringify(metrics))).toEqual(metrics)
+    expect(parseEvent(JSON.stringify({ ...metrics, gate_precision: 0.9, gate_precision_basis: 'measured on 10 test photos' }))?.gate_precision_basis).toBe('measured on 10 test photos')
+  })
+  it('accepts numeric memory IDs and decision focus and speech', () => {
+    expect(parseEvent(JSON.stringify({ ...eventBase, type: 'memory_saved', moment_id: 42, description: 'phone' }))?.moment_id).toBe(42)
+    const decision = { ...eventBase, type: 'decision', level: 'speak', text: 'Check line 2', speak: 'Check the math', reason: 'error', frame_id: 'f1', focus_box: [0.1, 0.2, 0.3, 0.4] }
+    expect(parseEvent(JSON.stringify(decision))).toEqual(decision)
+    expect(parseEvent(JSON.stringify({ ...decision, focus_box: null }))?.focus_box).toBeNull()
+  })
+  it('appends interleaved deltas by ask ID and replaces them with the final answer', () => {
+    let events: IrisEvent[] = []
+    for (const [ask_id, text] of [['a', '12g'], ['b', 'Other'], ['a', ' protein']]) {
+      const delta = parseEvent(JSON.stringify({ ...eventBase, type: 'answer_delta', ask_id, text }))!
+      expect(delta).not.toBeNull()
+      events = appendEvent(events, delta)
+    }
+    expect(events.find(e => e.ask_id === 'a')?.text).toBe('12g protein')
+    expect(events.find(e => e.ask_id === 'b')?.text).toBe('Other')
+    const final = parseEvent(JSON.stringify({ ...eventBase, type: 'answer', ask_id: 'a', question: '?', display: '12g protein', speak: '', latency_ms: 90, first_word_ms: 30 }))!
+    events = appendEvent(events, final)
+    expect(events.filter(e => e.ask_id === 'a')).toEqual([final])
+    expect(appendEvent(events, { ...eventBase, type: 'answer_delta', ask_id: 'a', text: 'late' })).toEqual(events)
+  })
+})
+describe('session startup', () => {
+  it('posts the session ID and reports server/network failures without throwing', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce({ ok: false }).mockRejectedValueOnce(new Error('offline'))
+    vi.stubGlobal('fetch', fetcher)
+    expect(await startSession('judge-02')).toBe(true)
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ session_id: 'judge-02' })
+    expect(await startSession('judge-03')).toBe(false)
+    expect(await startSession('judge-04')).toBe(false)
+  })
+  it('aborts startup after four seconds', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.stubGlobal('fetch', (_url: string, options: RequestInit) => new Promise((_resolve, reject) => {
+        options.signal!.addEventListener('abort', () => reject(new Error('aborted')))
+      }))
+      const pending = startSession('slow')
+      await vi.advanceTimersByTimeAsync(4000)
+      expect(await pending).toBe(false)
+    } finally { vi.useRealTimers() }
+  })
+})
+describe('WebSocket speech', () => {
+  function setup() {
+    const meter = { unlock: vi.fn().mockResolvedValue(undefined), playVoice: vi.fn().mockResolvedValue(undefined), stop: vi.fn() }
+    const note = vi.fn()
+    return { meter, note, voice: new EventSpeech(meter as unknown as AudioLevel, vi.fn(), note) }
+  }
+  it('waits for a tap and plays each frame/ask once, ignoring silent and display events', async () => {
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(1) })
+    vi.stubGlobal('fetch', fetcher)
+    const { voice, meter } = setup()
+    const decision: IrisEvent = { ...eventBase, type: 'decision', level: 'speak', frame_id: 'unique-frame', speak: 'Hello & welcome' }
+    voice.receive({ ...decision, level: 'silent' })
+    voice.receive({ ...decision, level: 'display' })
+    voice.receive(decision); voice.receive(decision)
+    expect(fetcher).not.toHaveBeenCalled()
+    voice.unlock()
+    await vi.waitFor(() => expect(meter.playVoice).toHaveBeenCalledOnce())
+    expect(fetcher.mock.calls[0][0]).toBe('/api/tts?text=Hello%20%26%20welcome')
+    const answer: IrisEvent = { ...eventBase, type: 'answer', ask_id: 'unique-ask', speak: 'Answer' }
+    voice.receive(answer); voice.receive(answer)
+    await vi.waitFor(() => expect(meter.playVoice).toHaveBeenCalledTimes(2))
+    voice.dispose()
+    const next = setup()
+    next.voice.unlock(); next.voice.receive(answer)
+    await Promise.resolve()
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    next.voice.dispose()
+  })
+  it.each([204, 500])('keeps text available when TTS returns %s', async status => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: status < 400, status }))
+    const { voice, meter, note } = setup()
+    voice.unlock()
+    voice.receive({ ...eventBase, type: 'answer', ask_id: 'unavailable-' + status, speak: 'Visible answer' })
+    await vi.waitFor(() => expect(note).toHaveBeenCalledWith('Voice unavailable. Iris’s words are shown on screen.'))
+    expect(meter.playVoice).not.toHaveBeenCalled()
+    voice.dispose()
+  })
+})

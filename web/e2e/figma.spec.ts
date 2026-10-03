@@ -4,7 +4,7 @@ test('Figma phone assets load at their design sizes and settings stay usable', a
   await page.goto('/phone')
   await page.getByRole('button', { name: 'More options' }).click()
   await page.getByLabel('Demo mode').check()
-  await page.getByRole('button', { name: 'More options' }).click()
+  await page.getByRole('button', { name: 'Close menu' }).click()
   await expect(page.getByText('Dark cacao almond bar', { exact: true })).toBeVisible()
   await page.evaluate(() => document.fonts.ready)
   const assets = await page.locator('.figma-phone img').evaluateAll(images => images.map(img => {

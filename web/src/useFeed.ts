@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
-import { parseEvent, type IrisEvent } from './api'
-export function useFeed(session: string, demo: boolean) {
+import { useEffect, useRef, useState } from 'react'
+import { appendEvent, parseEvent, type IrisEvent } from './api'
+export function useFeed(session: string, demo: boolean, onEvent?: (event: IrisEvent) => void) {
+  const callback = useRef(onEvent)
+  useEffect(() => { callback.current = onEvent }, [onEvent])
   const [events, setEvents] = useState<IrisEvent[]>([])
   const [status, setStatus] = useState('Connecting')
   useEffect(() => {
@@ -9,7 +11,7 @@ export function useFeed(session: string, demo: boolean) {
     let retry: ReturnType<typeof setTimeout>
     let deadline: ReturnType<typeof setTimeout>
     let attempts = 0
-    function append(event: IrisEvent) { if (active) setEvents(old => [event, ...old].slice(0, 200)) }
+    function append(event: IrisEvent) { if (active) { setEvents(old => appendEvent(old, event)); callback.current?.(event) } }
     if (demo) {
       const samples = [
         { level: 'silent', text: '', reason: 'Nothing new in view. Giving you space.' },

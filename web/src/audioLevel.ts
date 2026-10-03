@@ -21,6 +21,40 @@ export class AudioLevel {
     source.connect(this.analyser)
     if (audible) this.analyser.connect(ctx.destination)
   }
+
+  async unlock() {
+    const ctx = this.ensureContext()
+    const resumed = ctx.resume()
+    const silent = ctx.createBufferSource()
+    silent.buffer = ctx.createBuffer(1, 1, ctx.sampleRate)
+    silent.connect(ctx.destination)
+    silent.start()
+    await resumed
+  }
+  async playVoice(data: ArrayBuffer, signal: AbortSignal, started: () => void) {
+    const ctx = this.ensureContext()
+    const buffer = await ctx.decodeAudioData(data)
+    if (signal.aborted) return
+    this.stop()
+    const source = ctx.createBufferSource()
+    source.buffer = buffer
+    this.connect(source, true)
+    await new Promise<void>((resolve, reject) => {
+      const finish = () => {
+        signal.removeEventListener('abort', abort)
+        if (this.source === source) this.stop()
+        resolve()
+      }
+      const abort = () => { source.stop(); finish() }
+      source.onended = finish
+      signal.addEventListener('abort', abort, { once: true })
+      try { source.start(); started() } catch (error) {
+        signal.removeEventListener('abort', abort)
+        this.stop()
+        reject(error)
+      }
+    })
+  }
   async startMic() {
     this.stop()
     const generation = this.generation
