@@ -108,6 +108,22 @@ def _cost(u):
     return float(u.get("cost") or 0)
 
 
+def request_body(model, msgs, max_tokens=1500):
+    """The chat-completions body for a model, with only the settings its provider accepts."""
+    provider, name, effort = parse(model)
+    gpt6 = provider == "openai" and name.startswith("gpt-6")
+    body = {"model": name, "messages": msgs, "stream": True, "stream_options": {"include_usage": True}}
+    # OpenAI's current models reject max_tokens; every other provider here expects it.
+    body["max_completion_tokens" if provider == "openai" else "max_tokens"] = max_tokens
+    # gpt-6 and the Claude models after Haiku 4.5 only allow the default temperature.
+    if not (gpt6 or (provider == "anthropic" and "haiku" not in name)):
+        body["temperature"] = 0.2
+    effort = effort or ("none" if gpt6 else "")   # gpt-6 reasons unless told not to, which delays the first word
+    if effort:
+        body["reasoning_effort"] = effort
+    return body
+
+
 async def stream(model, msgs, max_tokens=1500):
     """Yield text chunks as the model writes them. Raises on HTTP errors (429 included).
     max_tokens is generous because reasoning tokens can count against it."""
@@ -118,12 +134,7 @@ async def stream(model, msgs, max_tokens=1500):
         raise RuntimeError(f"{key_env} not set")
     _roll()
     usage["calls"] += 1
-    body = {"model": name, "messages": msgs, "temperature": 0.2,
-            "stream": True, "stream_options": {"include_usage": True}}
-    # OpenAI's current models reject max_tokens; every other provider here expects it.
-    body["max_completion_tokens" if provider == "openai" else "max_tokens"] = max_tokens
-    if effort:
-        body["reasoning_effort"] = effort
+    body = request_body(model, msgs, max_tokens)
     headers = {"Authorization": f"Bearer {key}"}
     async with http.stream("POST", base + "chat/completions", json=body, headers=headers,
                            timeout=httpx.Timeout(20, connect=3)) as r:
@@ -230,6 +241,15 @@ if __name__ == "__main__":
     assert parse_json('sure! {"urgency": 3} ok') == {"urgency": 3} and parse_json("nope") is None
     assert parse("xai:grok-4.7@low") == ("xai", "grok-4.7", "low")
     assert parse("openrouter:google/gemini-3.5-flash-lite") == ("openrouter", "google/gemini-3.5-flash-lite", "")
+    b = request_body("xai:grok-4.7@low", [])
+    assert b["temperature"] == 0.2 and b["max_tokens"] == 1500 and b["reasoning_effort"] == "low"
+    b = request_body("openai:gpt-6-luna", [])
+    assert "temperature" not in b and "max_tokens" not in b and b["max_completion_tokens"] == 1500 and b["reasoning_effort"] == "none"
+    assert request_body("openai:gpt-6-sol@low", [])["reasoning_effort"] == "low"
+    b = request_body("openai:gpt-5.4-mini", [])
+    assert b["temperature"] == 0.2 and "reasoning_effort" not in b
+    assert "temperature" not in request_body("anthropic:claude-sonnet-5-5", [])
+    assert request_body("anthropic:claude-haiku-4-5", [])["temperature"] == 0.2
     assert _cost({"cost_in_usd_ticks": 25_000_000}) == 0.0025 and _cost({"cost": 0.01}) == 0.01 and _cost({}) == 0
     big, small = io.BytesIO(), io.BytesIO()
     Image.new("RGB", (2560, 1920), "white").save(big, "JPEG")
