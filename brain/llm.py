@@ -28,6 +28,8 @@ log = logging.getLogger("iris.llm")
 PROVIDERS = {
     "xai": ("https://api.x.ai/v1/", "XAI_API_KEY"),
     "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai/", "GEMINI_API_KEY"),
+    "openai": ("https://api.openai.com/v1/", "OPENAI_API_KEY"),
+    "anthropic": ("https://api.anthropic.com/v1/", "ANTHROPIC_API_KEY"),   # its OpenAI-compatible endpoint; takes images
     "openrouter": ("https://openrouter.ai/api/v1/", "OPENROUTER_API_KEY"),
     "asi": ("https://api.asi1.ai/v1/", "ASI_API_KEY"),   # Fetch.ai; text only until it documents image input
 }
@@ -116,8 +118,10 @@ async def stream(model, msgs, max_tokens=1500):
         raise RuntimeError(f"{key_env} not set")
     _roll()
     usage["calls"] += 1
-    body = {"model": name, "messages": msgs, "max_tokens": max_tokens, "temperature": 0.2,
+    body = {"model": name, "messages": msgs, "temperature": 0.2,
             "stream": True, "stream_options": {"include_usage": True}}
+    # OpenAI's current models reject max_tokens; every other provider here expects it.
+    body["max_completion_tokens" if provider == "openai" else "max_tokens"] = max_tokens
     if effort:
         body["reasoning_effort"] = effort
     headers = {"Authorization": f"Bearer {key}"}
