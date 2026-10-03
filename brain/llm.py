@@ -36,7 +36,7 @@ PROVIDERS = {
 PRIMARY = os.getenv("PRIMARY_MODEL") or "xai:grok-4.20-non-reasoning"
 WATCH = os.getenv("WATCH_MODEL") or PRIMARY
 BACKUP = os.getenv("BACKUP_MODEL") or "openrouter:google/gemini-3.5-flash-lite"
-HEDGE_S = 1.5        # start the backup if the primary has no first chunk by then
+HEDGE_S = 2.5        # start the backup if the primary has no first chunk by then
 MAX_SIDE = int(os.getenv("IMAGE_MAX_SIDE") or 1280)   # px; bigger frames are downscaled before upload
 
 # httpx closes idle connections after 5 s by default; a question after a pause would pay a fresh TLS handshake.
