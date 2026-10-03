@@ -1,5 +1,10 @@
 """Model calls. Every provider here speaks the OpenAI chat-completions dialect, so switching
-is one line in .env: PRIMARY_MODEL / BACKUP_MODEL as "provider:model".
+is one line in .env. Models are "provider:model", with an optional "@effort" suffix for
+reasoning models, e.g. "xai:grok-4.7@low".
+
+  PRIMARY_MODEL  answers questions (latency first)
+  WATCH_MODEL    judges loop frames (accuracy first; defaults to PRIMARY_MODEL)
+  BACKUP_MODEL   takes over when either fails or is slow
 
 Run `python llm.py` for the hedging self-check (no network).
 """
@@ -9,7 +14,7 @@ import json
 import logging
 import os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date
 from pathlib import Path
 
 import httpx
@@ -19,34 +24,39 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 log = logging.getLogger("iris.llm")
 
 PROVIDERS = {
-    "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai/", "GEMINI_API_KEY"),
+    "xai": ("https://api.x.ai/v1/", "XAI_API_KEY"),
     "openrouter": ("https://openrouter.ai/api/v1/", "OPENROUTER_API_KEY"),
     "asi": ("https://api.asi1.ai/v1/", "ASI_API_KEY"),   # Fetch.ai; text only until it documents image input
 }
-PRIMARY = os.getenv("PRIMARY_MODEL") or "gemini:gemini-3.5-flash-lite"
+PRIMARY = os.getenv("PRIMARY_MODEL") or "xai:grok-4.20-non-reasoning"
+WATCH = os.getenv("WATCH_MODEL") or PRIMARY
 BACKUP = os.getenv("BACKUP_MODEL") or "openrouter:google/gemini-3.5-flash-lite"
-REASONING_EFFORT = os.getenv("REASONING_EFFORT", "")  # e.g. "none"/"low" if thinking slows first token
-DAILY_BUDGET = 450   # free-tier Gemini is 500/day per project; keep headroom
 HEDGE_S = 1.5        # start the backup if the primary has no first chunk by then
 
 http = httpx.AsyncClient()
-usage = {"day": "", "gemini": 0}   # main.py persists this in state.json
+usage = {"day": "", "calls": 0, "usd": 0.0}   # main.py persists this in state.json
 
 
-def _pacific_day():
-    # ponytail: fixed UTC-7 (PDT) avoids tzdata on Windows; quota resets midnight Pacific. Use -8 after Nov 2.
-    return datetime.now(timezone(timedelta(hours=-7))).date().isoformat()
+def _roll():
+    if usage.get("day") != date.today().isoformat():
+        usage.update(day=date.today().isoformat(), calls=0, usd=0.0)
 
 
-def gemini_calls_today():
-    return usage["gemini"] if usage.get("day") == _pacific_day() else 0
+def calls_today():
+    _roll()
+    return usage["calls"]
 
 
-def route(model):
-    """Swap free-tier Gemini for the backup once the daily budget is spent. -> (model, why)"""
-    if model.startswith("gemini:") and gemini_calls_today() >= DAILY_BUDGET:
-        return BACKUP, "daily budget"
-    return model, ""
+def usd_today():
+    _roll()
+    return round(usage["usd"], 4)
+
+
+def parse(model):
+    """'xai:grok-4.7@low' -> ('xai', 'grok-4.7', 'low')"""
+    provider, rest = model.split(":", 1)
+    name, _, effort = rest.partition("@")
+    return provider, name, effort
 
 
 def messages(system, text, jpeg):
@@ -58,23 +68,30 @@ def messages(system, text, jpeg):
     ]
 
 
-async def stream(model, msgs, max_tokens=400):
-    """Yield text chunks as the model writes them. Raises on HTTP errors (429 included)."""
-    provider, name = model.split(":", 1)
+def _cost(u):
+    """USD from a usage block: xAI reports ticks (1e10 per dollar), OpenRouter reports dollars."""
+    if u.get("cost_in_usd_ticks") is not None:
+        return u["cost_in_usd_ticks"] / 1e10
+    return float(u.get("cost") or 0)
+
+
+async def stream(model, msgs, max_tokens=1500):
+    """Yield text chunks as the model writes them. Raises on HTTP errors (429 included).
+    max_tokens is generous because reasoning tokens can count against it."""
+    provider, name, effort = parse(model)
     base, key_env = PROVIDERS[provider]
     key = os.getenv(key_env)
     if not key:
         raise RuntimeError(f"{key_env} not set")
-    if provider == "gemini":
-        if usage.get("day") != _pacific_day():
-            usage.update(day=_pacific_day(), gemini=0)
-        usage["gemini"] += 1
-    body = {"model": name, "messages": msgs, "max_tokens": max_tokens, "temperature": 0.2, "stream": True}
-    if REASONING_EFFORT:
-        body["reasoning_effort"] = REASONING_EFFORT
+    _roll()
+    usage["calls"] += 1
+    body = {"model": name, "messages": msgs, "max_tokens": max_tokens, "temperature": 0.2,
+            "stream": True, "stream_options": {"include_usage": True}}
+    if effort:
+        body["reasoning_effort"] = effort
     headers = {"Authorization": f"Bearer {key}"}
     async with http.stream("POST", base + "chat/completions", json=body, headers=headers,
-                           timeout=httpx.Timeout(10, connect=3)) as r:
+                           timeout=httpx.Timeout(20, connect=3)) as r:
         if r.status_code >= 400:
             raise RuntimeError(f"{model} HTTP {r.status_code}: {(await r.aread())[:200]!r}")
         async for line in r.aiter_lines():
@@ -84,20 +101,23 @@ async def stream(model, msgs, max_tokens=400):
             if data == "[DONE]":
                 break
             try:
-                delta = json.loads(data)["choices"][0]["delta"].get("content")
-            except (ValueError, KeyError, IndexError, TypeError):
+                chunk = json.loads(data)
+            except ValueError:
+                continue
+            if isinstance(chunk.get("usage"), dict):
+                usage["usd"] += _cost(chunk["usage"])
+            try:
+                delta = chunk["choices"][0]["delta"].get("content")
+            except (KeyError, IndexError, TypeError, AttributeError):
                 continue
             if delta:
                 yield delta
 
 
-async def chat(msgs, timeout=6.0):
-    """Whole reply, primary first, backup on any failure. -> (text, model used)"""
-    model, why = route(PRIMARY)
-    if why:
-        log.info("using %s: %s", model, why)
+async def chat(msgs, model=None, timeout=6.0):
+    """Whole reply, model (default PRIMARY) first, backup on any failure. -> (text, model used)"""
     last = None
-    for m in dict.fromkeys([model, BACKUP]):
+    for m in dict.fromkeys([model or PRIMARY, BACKUP]):
         try:
             async with asyncio.timeout(timeout):
                 return "".join([c async for c in stream(m, msgs)]), m
@@ -107,10 +127,10 @@ async def chat(msgs, timeout=6.0):
     raise RuntimeError(f"all models failed: {last}")
 
 
-async def hedged_stream(msgs, hedge_s=HEDGE_S):
-    """Stream from the primary. If it has no first chunk within hedge_s, or fails, race the
-    backup and keep whichever produces a chunk first; the other is cancelled."""
-    model, why = route(PRIMARY)
+async def hedged_stream(msgs, model=None, hedge_s=HEDGE_S):
+    """Stream from model (default PRIMARY). If it has no first chunk within hedge_s, or fails,
+    race the backup and keep whichever produces a chunk first; the other is cancelled."""
+    model = model or PRIMARY
     gens = [stream(model, msgs)]
     tasks = {asyncio.create_task(anext(gens[0])): 0}
     done, _ = await asyncio.wait(tasks, timeout=hedge_s)
@@ -136,7 +156,7 @@ async def hedged_stream(msgs, hedge_s=HEDGE_S):
     if winner is None:
         raise RuntimeError(f"all models failed: {errors}")
     if winner == 1:
-        log.info("hedge: backup won (%s)", why or "primary slow or failed")
+        log.info("hedge: backup won (primary slow or failed)")
     try:
         yield first
         async for chunk in gens[winner]:
@@ -164,16 +184,16 @@ if __name__ == "__main__":
             yield c
 
     async def run(primary):
-        global PRIMARY
-        PRIMARY = primary
-        return "".join([c async for c in hedged_stream([], hedge_s=0.1)])
+        return "".join([c async for c in hedged_stream([], model=primary, hedge_s=0.1)])
 
     stream = fake  # noqa: F811 - swap the network out for the check
     BACKUP = "b:fast"
     assert asyncio.run(run("p:fast")) == "p:fast done"
     assert asyncio.run(run("p:slow")) == "b:fast done"
     assert asyncio.run(run("p:fail")) == "b:fast done"
+    assert asyncio.run(chat([], model="p:fail")) == ("b:fast done", "b:fast")
     assert parse_json('sure! {"urgency": 3} ok') == {"urgency": 3} and parse_json("nope") is None
-    usage.update(day=_pacific_day(), gemini=DAILY_BUDGET)
-    assert route("gemini:x") == (BACKUP, "daily budget") and route("openrouter:y") == ("openrouter:y", "")
+    assert parse("xai:grok-4.7@low") == ("xai", "grok-4.7", "low")
+    assert parse("openrouter:google/gemini-3.5-flash-lite") == ("openrouter", "google/gemini-3.5-flash-lite", "")
+    assert _cost({"cost_in_usd_ticks": 25_000_000}) == 0.0025 and _cost({"cost": 0.01}) == 0.01 and _cost({}) == 0
     print("llm ok")
