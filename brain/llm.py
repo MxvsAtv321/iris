@@ -27,6 +27,7 @@ log = logging.getLogger("iris.llm")
 
 PROVIDERS = {
     "xai": ("https://api.x.ai/v1/", "XAI_API_KEY"),
+    "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai/", "GEMINI_API_KEY"),
     "openrouter": ("https://openrouter.ai/api/v1/", "OPENROUTER_API_KEY"),
     "asi": ("https://api.asi1.ai/v1/", "ASI_API_KEY"),   # Fetch.ai; text only until it documents image input
 }
