@@ -18,6 +18,7 @@ from PIL import Image
 from pydantic import BaseModel
 
 import gate
+import live
 import llm  # loads .env
 import prompts
 import voice
@@ -34,6 +35,7 @@ CHANGE_THRESHOLD = 12          # mean abs grey-level diff (0-255) on a 32x24 thu
 ASK_TIMEOUT_S = 5
 WATCH_TIMEOUT_S = 12           # per model; the loop can wait, a reasoning watch model may need it
 FALLBACK = "Didn't catch that, try again"
+NO_PHOTO = "\n(The camera didn't respond, so there is no photo. If the question needs one, say you can't see right now.)"
 HERE = Path(__file__).resolve().parent
 STATE = HERE / "state.json"
 BAKEOFF = HERE / "bakeoff" / "results.json"
@@ -47,6 +49,7 @@ frame = {"jpeg": b"", "ts": 0.0}
 watch = {"ref": None, "box": None, "last_call": -1e9}
 frame_ids, ask_ids = count(1), count(1)
 background = set()
+asking = 0                     # questions in flight; the loop skips model calls meanwhile
 
 
 # ---------- state ----------
@@ -127,6 +130,15 @@ async def fresh_frame():
         raise
 
 
+async def grab():
+    """A fresh frame, or b"" when the camera is down: the question still gets an answer."""
+    try:
+        return await fresh_frame()
+    except Exception as e:  # noqa: BLE001
+        log.warning("capture failed: %s", e)
+        return b""
+
+
 async def show(text):
     try:
         await http.get(HUD + "/show", params={"text": text[:40]}, timeout=1)
@@ -175,6 +187,8 @@ async def tick(sid, fid):
     small = thumb(jpeg)
     if watch["ref"] is not None and change(small, watch["ref"]) < CHANGE_THRESHOLD:
         return await decision(sid, fid, "silent", "no change", watch["box"])
+    if asking:
+        return await decision(sid, fid, "silent", "question in progress", watch["box"])
     wait = LOOP_GAP_S - (time.monotonic() - watch["last_call"])
     if wait > 0:
         return await decision(sid, fid, "silent", f"scene changed; next model call in {wait:.0f}s", watch["box"])
@@ -254,6 +268,8 @@ async def metrics_loop():
 @asynccontextmanager
 async def lifespan(app):
     tasks = [asyncio.create_task(watch_loop()), asyncio.create_task(metrics_loop())]
+    bg(llm.warm())
+    bg(live.prefetch(http))
     yield
     for t in tasks:
         t.cancel()
@@ -281,6 +297,7 @@ async def start_session(body: SessionIn):
     gates.pop(sid, None)              # fresh cooldowns: every judge gets the nudge
     watch["ref"], watch["box"] = None, None
     save_state()
+    bg(live.prefetch(http))
     return {"session_id": sid, "earlier": len(s["earlier"])}
 
 
@@ -296,32 +313,53 @@ class AskIn(BaseModel):
     text: str
 
 
+async def recall(sid, question):
+    """Memory note for a recall question, or "" on a miss or failure."""
+    try:
+        r = await http.post(f"http://127.0.0.1:{PORT}/api/memory/search",
+                            json={"session_id": sid, "query": question}, timeout=2)
+        r.raise_for_status()
+        hit = r.json()
+        if hit.get("found"):
+            return f"{hit.get('captured_at', '')}: {hit.get('description', '')}"
+    except Exception as e:  # noqa: BLE001
+        log.warning("memory search failed (%s); answering from recent context", e)
+    return ""
+
+
+async def remember_ask(sid, shot, question, said):
+    jpeg = await shot
+    if jpeg:
+        await remember(sid, jpeg, f"Asked '{question}', Iris answered: {said}")
+
+
 @app.post("/api/ask")
 async def ask(q: AskIn):
+    global asking
     t0 = time.monotonic()
     ms = lambda: int((time.monotonic() - t0) * 1000)  # noqa: E731
     sid, ask_id = q.session_id, f"a_{next(ask_ids):04d}"
     mode, question = prompts.pick_mode(q.text)
     s, g = session(sid), gates[sid]
     g.hold()
-    out, first_ms, shown, timings, jpeg = "", None, False, {}, b""
+    asking += 1
+    out, first_ms, shown, timings, sources = "", None, False, {}, []
+    # Camera, memory and live data are fetched side by side; none of them raises.
+    shot = asyncio.create_task(grab())
+    memo_task = asyncio.create_task(recall(sid, question)) if mode == "recall" else None
+    live_task = asyncio.create_task(live.note(question, http)) if live.topics(question) else None
+    if live_task and mode == "ask" and not prompts.DEICTIC.search(question):
+        mode = "live"   # answered from live data alone: no photo to wait for or upload
     try:
         async with asyncio.timeout(ASK_TIMEOUT_S):
-            jpeg = await fresh_frame()
-            timings["capture"] = ms()
-            memo = ""
-            if mode == "recall":
-                try:
-                    r = await http.post(f"http://127.0.0.1:{PORT}/api/memory/search",
-                                        json={"session_id": sid, "query": question}, timeout=2)
-                    r.raise_for_status()
-                    hit = r.json()
-                    if hit.get("found"):
-                        memo = f"{hit.get('captured_at', '')}: {hit.get('description', '')}"
-                except Exception as e:  # noqa: BLE001
-                    log.warning("memory search failed (%s); answering from recent context", e)
-            msgs = llm.messages(prompts.ASK[mode], prompts.build_ask(question, s, memo), jpeg)
-            async for chunk in llm.hedged_stream(msgs):
+            memo = await memo_task if memo_task else ""
+            live_note, sources = await live_task if live_task else ("", [])
+            jpeg = b""
+            if mode != "live":
+                jpeg = await shot
+            timings["context"] = ms()
+            text = prompts.build_ask(question + ("" if jpeg or mode == "live" else NO_PHOTO), s, memo, live_note)
+            async for chunk in llm.hedged_stream(llm.messages(prompts.ASK[mode], text, jpeg)):
                 if first_ms is None:
                     first_ms = timings["first_word"] = ms()
                 out += chunk
@@ -331,6 +369,8 @@ async def ask(q: AskIn):
                     bg(show(prompts.split_answer(out)[0]))   # line 1 on the glasses before line 2 is done
     except Exception as e:  # noqa: BLE001 - never a 500
         log.warning("ask %s failed after %dms: %s: %s", ask_id, ms(), type(e).__name__, e)
+    finally:
+        asking -= 1
 
     display, speak = prompts.split_answer(out)
     if not display:
@@ -342,14 +382,21 @@ async def ask(q: AskIn):
     latencies.append((latency_ms, first_ms))
     g.hold(speak or display)
     note(s["said"], speak or display)
-    if jpeg and display != FALLBACK:
-        bg(remember(sid, jpeg, f"Asked '{question}', Iris answered: {speak or display}"))
+    if display != FALLBACK:
+        bg(remember_ask(sid, shot, question, speak or display))
     save_state()
-    log.info("ask %s mode=%s %s total=%dms", ask_id, mode, timings, latency_ms)
+    log.info("ask %s mode=%s %s total=%dms sources=%s", ask_id, mode, timings, latency_ms, sources)
     await emit("answer", sid, ask_id=ask_id, question=question, display=display, speak=speak,
-               latency_ms=latency_ms, first_word_ms=first_ms)
+               latency_ms=latency_ms, first_word_ms=first_ms, context=sources)
     await emit("metrics", sid, **metrics())
     return {"display": display, "speak": speak, "level": level, "latency_ms": latency_ms}
+
+
+@app.get("/api/live")
+async def live_context(q: str):
+    """The live data a question would get: for the dashboard and for testing on site."""
+    text, sources = await live.note(q, http)
+    return {"topics": sorted(live.topics(q)), "note": text, "sources": sources}
 
 
 @app.websocket("/api/ws")

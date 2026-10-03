@@ -39,6 +39,10 @@ Response:
 
 `POST { "session_id": "judge-01" }` makes that session active and starts the watch loop; returns `{ "session_id", "earlier" }` (how many descriptions were carried over from the previous session). `DELETE` stops the loop. Cooldowns reset per session, so every judge gets the nudge.
 
+### `GET /api/live?q=...`
+
+The live data a question would get, for testing and the dashboard: `{ "topics": ["sky"], "note": "Tonight in Ann Arbor: sunset 7:12 PM, ...", "sources": ["Open-Meteo"] }`. Topics: `weather`, `sky`, `launch`, `iss`. Questions on these topics are answered from this data (without the photo unless they say "this" or "that").
+
 ### `GET /api/tts?text=...`
 
 Streams `audio/mpeg` (ElevenLabs). Returns `204` if speech is unavailable; just show the text.
@@ -61,7 +65,8 @@ One JSON message per event. Every message has `type`, `session_id` and `at` (ISO
 
 { "type": "answer", "session_id": "judge-01", "at": "...", "ask_id": "a_0007",
   "question": "how much protein is in this?", "display": "12g protein per bar",
-  "speak": "That bar has about 12 grams of protein.", "latency_ms": 1840, "first_word_ms": 620 }
+  "speak": "That bar has about 12 grams of protein.", "latency_ms": 1840, "first_word_ms": 620,
+  "context": [] }
 
 { "type": "memory_saved", "session_id": "judge-01", "at": "...",
   "moment_id": "m_0192", "description": "a protein bar on a wooden table" }
@@ -77,6 +82,7 @@ One JSON message per event. Every message has `type`, `session_id` and `at` (ISO
 - `focus_box` is `[x, y, w, h]` as fractions (0 to 1) of the image, origin top left: where Iris is looking. It is on every decision. On "no change" frames it repeats the last box; it is `null` on errors or before the first look.
 - `speak` on a decision is the sentence to say; empty unless `level` is `speak`. `text` is the display line.
 - `answer_delta.text` is new text only: append it. Deltas for one question share an `ask_id`, and the final `answer` carries the same `ask_id`. The text is two lines: the display line, then the spoken answer.
+- `answer.context` lists the live data sources the answer used, e.g. `["Open-Meteo", "Launch Library 2 (SpaceX)"]`; empty for ordinary questions.
 - `model_usd_today` is model spend reported by the providers (Grok credits included); `ask_model` / `watch_model` are `provider:model[@effort]`.
 - `gate_precision` comes from the bake-off, not live use. Show it with `gate_precision_basis`, e.g. "Gate precision 0.9, measured on test photos". It is `null` until the bake-off has run.
 - **Phone audio:** play speech only from WebSocket events. A `decision` with `level: "speak"` means fetch `/api/tts?text=<speak>`; an `answer` with non-empty `speak` means the same. Never play from the `/api/ask` HTTP response, or it plays twice. Unlock audio with a tap at session start, because mobile browsers block autoplay.

@@ -10,6 +10,7 @@ Run `python llm.py` for the hedging self-check (no network).
 """
 import asyncio
 import base64
+import io
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
+from PIL import Image
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 log = logging.getLogger("iris.llm")
@@ -32,8 +34,10 @@ PRIMARY = os.getenv("PRIMARY_MODEL") or "xai:grok-4.20-non-reasoning"
 WATCH = os.getenv("WATCH_MODEL") or PRIMARY
 BACKUP = os.getenv("BACKUP_MODEL") or "openrouter:google/gemini-3.5-flash-lite"
 HEDGE_S = 1.5        # start the backup if the primary has no first chunk by then
+MAX_SIDE = int(os.getenv("IMAGE_MAX_SIDE") or 1280)   # px; bigger frames are downscaled before upload
 
-http = httpx.AsyncClient()
+# httpx closes idle connections after 5 s by default; a question after a pause would pay a fresh TLS handshake.
+http = httpx.AsyncClient(limits=httpx.Limits(keepalive_expiry=120))
 usage = {"day": "", "calls": 0, "usd": 0.0}   # main.py persists this in state.json
 
 
@@ -59,13 +63,39 @@ def parse(model):
     return provider, name, effort
 
 
-def messages(system, text, jpeg):
-    image = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()
+def shrink(jpeg, max_side=MAX_SIDE):
+    """Frames over max_side are downscaled: less upload time on the hotspot, fewer image tokens."""
+    try:
+        img = Image.open(io.BytesIO(jpeg))
+        if max(img.size) <= max_side:
+            return jpeg
+        img.thumbnail((max_side, max_side))
+        buf = io.BytesIO()
+        img.convert("RGB").save(buf, "JPEG", quality=85)
+        return buf.getvalue()
+    except Exception:  # noqa: BLE001 - an odd frame is sent as is
+        return jpeg
+
+
+def messages(system, text, jpeg=None):
+    """No jpeg means a text-only question."""
+    if not jpeg:
+        return [{"role": "system", "content": system}, {"role": "user", "content": text}]
+    image = "data:image/jpeg;base64," + base64.b64encode(shrink(jpeg)).decode()
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": [{"type": "text", "text": text},
                                      {"type": "image_url", "image_url": {"url": image}}]},
     ]
+
+
+async def warm():
+    """Open a pooled connection to each model host, so the first question skips the handshake."""
+    for base in {PROVIDERS[parse(m)[0]][0] for m in (PRIMARY, WATCH, BACKUP)}:
+        try:
+            await http.head(base, timeout=3)
+        except Exception as e:  # noqa: BLE001
+            log.info("warm %s: %s", base, e)
 
 
 def _cost(u):
@@ -196,4 +226,10 @@ if __name__ == "__main__":
     assert parse("xai:grok-4.7@low") == ("xai", "grok-4.7", "low")
     assert parse("openrouter:google/gemini-3.5-flash-lite") == ("openrouter", "google/gemini-3.5-flash-lite", "")
     assert _cost({"cost_in_usd_ticks": 25_000_000}) == 0.0025 and _cost({"cost": 0.01}) == 0.01 and _cost({}) == 0
+    big, small = io.BytesIO(), io.BytesIO()
+    Image.new("RGB", (2560, 1920), "white").save(big, "JPEG")
+    Image.new("RGB", (640, 480), "white").save(small, "JPEG")
+    assert Image.open(io.BytesIO(shrink(big.getvalue()))).size == (MAX_SIDE, MAX_SIDE * 3 // 4)
+    assert shrink(small.getvalue()) == small.getvalue() and shrink(b"not a jpeg") == b"not a jpeg"
+    assert messages("s", "q")[1] == {"role": "user", "content": "q"}
     print("llm ok")
