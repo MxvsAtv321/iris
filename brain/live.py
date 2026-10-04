@@ -28,13 +28,17 @@ TTL = {"weather": (600, 3 * 3600), "launch": (1800, 6 * 3600), "iss": (15, 0)}  
 SOURCES = {"weather": "Open-Meteo", "launch": "Launch Library 2 (SpaceX)", "iss": "wheretheiss.at"}
 
 TOPICS = {
-    "weather": r"\b(weather|temperature|forecast|rain\w*|snow\w*|umbrella|jacket|windy|sunny|cloudy|"
+    "weather": r"\b(weather|temperature|forecast|rain(?!coat)\w*|snow\w*|windy|sunny|cloudy|"
                r"how (hot|cold|warm) is it|is it (hot|cold|warm|nice) out)",
     "sky": r"\b(sky|stars|stargaz\w*|moon|sunset|sunrise|planets?|meteors?|aurora|northern lights)\b"
            r"|\btonight\b.*\b(see|look|space|sky|out|up)\b|\bspace\b.*\btonight\b",
     "launch": r"\b(spacex|launch(es)?|rockets?|falcon|starship|starlink|dragon capsule)\b",
     "iss": r"\b(iss|space station)\b",
 }
+# Things you carry for the weather. "Do I need an umbrella" is a weather question;
+# "where did I leave my umbrella" is about the thing, and the forecast is noise in the answer.
+GEAR = re.compile(r"\b(umbrella|jacket|raincoat)s?\b", re.I)
+MISPLACED = re.compile(r"\b(where|when did i|did i (leave|see|put)|left my|lost my|find my)\b", re.I)
 NEEDS = {"weather": {"weather"}, "sky": {"weather", "launch", "iss"}, "launch": {"launch"}, "iss": {"iss"}}
 
 WMO = {0: "clear", 1: "mostly clear", 2: "partly cloudy", 3: "overcast", 45: "foggy", 48: "foggy",
@@ -47,7 +51,10 @@ WMO = {0: "clear", 1: "mostly clear", 2: "partly cloudy", 3: "overcast", 45: "fo
 
 def topics(question):
     q = question or ""
-    return {t for t, pattern in TOPICS.items() if re.search(pattern, q, re.I)}
+    found = {t for t, pattern in TOPICS.items() if re.search(pattern, q, re.I)}
+    if GEAR.search(q) and not MISPLACED.search(q):
+        found.add("weather")
+    return found
 
 
 # ---------- fetchers ----------
@@ -237,6 +244,13 @@ if __name__ == "__main__":
     assert topics("where is the ISS") == {"iss"}
     assert topics("how much protein is in this?") == set()
     assert topics("what are you doing tonight") == set()
+    # Weather gear: asking whether to take it is a weather question, asking where it is isn't.
+    for q in ("do I need an umbrella?", "should I take a jacket", "is this jacket warm enough", "raincoat today?"):
+        assert topics(q) == {"weather"}, q
+    for q in ("where did I leave my umbrella?", "where is my jacket", "where's my raincoat", "did I leave my umbrella here",
+              "when did I see my jacket", "I lost my umbrella"):
+        assert topics(q) == set(), q
+    assert topics("where did I leave my umbrella, is it raining?") == {"weather"}   # still asks about the weather
 
     tz = timezone.utc
     now = datetime(2026, 10, 3, 17, 15, tzinfo=tz)
@@ -273,6 +287,7 @@ if __name__ == "__main__":
         FETCH.update(weather=ok, launch=broken, iss=slow)
         text, sources = await note("how's the weather", None, now)
         assert "62F" in text and sources == ["Open-Meteo"], (text, sources)
+        assert await note("where did I leave my umbrella?", None, now) == ("", [])   # recall: no lookup, no source
         await note("is it going to rain", None, now)
         assert len(calls) == 1                                  # second question served from cache
         async def slow_ok(http):
