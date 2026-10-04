@@ -13,7 +13,10 @@ export type Trace = {
   candidate: { text: string; say: string }
   urgency: number | null; display_at: number; speak_at: number; proposed: Level
   rules: Rule[]; blocked_by: RuleName | null; verdict: Level
-  latency_ms: { capture?: number; model?: number; gate?: number; total?: number }
+  latency_ms: { capture?: number; model?: number; jev?: number; gate?: number; total?: number }
+  /** System 1's second opinion, when the brain runs with JEV_GATE=1 and it answered in time: the chance this moment
+   *  is worth an interruption, which replaced the vision model's own urgency (`watch_urgency`). */
+  jev: { probability: number; model: string; ms: number; watch_urgency: number | null } | null
   /** Thinking ahead: the wearer is heading out and this thing was last seen resting somewhere. The nudge is about it. */
   ahead: { item: string; place: string; seen: string; at: string } | null
 }
@@ -64,6 +67,7 @@ function traceOf(event: IrisEvent): Trace {
     blocked_by: t.blocked_by ?? null,
     verdict: event.level ?? 'silent',
     latency_ms: object(t.latency_ms) ? t.latency_ms : {},
+    jev: object(t.jev) && typeof t.jev.probability === 'number' ? t.jev : null,
     ahead: object(t.ahead) && typeof t.ahead.item === 'string' && typeof t.ahead.place === 'string' ? t.ahead : null,
   }
 }
@@ -208,6 +212,13 @@ function sentence(text: string, capital = true): string {
   const s = text.trim()
   if (!s) return ''
   return (capital ? s[0].toUpperCase() + s.slice(1) : s) + (/[.!?]$/.test(s) ? '' : '.')
+}
+
+/** "Jev: 83% worth interrupting. The vision model alone said urgency 4." Empty when Jev had no say. */
+export function jevLine(t: Trace): string {
+  if (!t.jev) return ''
+  const own = typeof t.jev.watch_urgency === 'number' && t.jev.watch_urgency !== t.urgency ? ` The vision model alone said urgency ${t.jev.watch_urgency}.` : ''
+  return `Jev: ${Math.round(t.jev.probability * 100)}% worth interrupting.${own}`
 }
 
 /** "Thinking ahead: the phone was last seen on the table, at 19:02." Empty when this moment wasn't about leaving something. */

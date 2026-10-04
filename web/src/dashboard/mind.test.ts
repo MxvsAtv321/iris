@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { IrisEvent } from '../api'
-import { aheadLine, askLine, EMPTY, lullLine, parseSnapshot, reduce, thoughts, verdict, type AnswerEvent, type Decision, type Lull, type Trace } from './mind'
+import { aheadLine, askLine, EMPTY, jevLine, lullLine, parseSnapshot, reduce, thoughts, verdict, type AnswerEvent, type Decision, type Lull, type Trace } from './mind'
 
 const at = (s: number) => new Date(Date.UTC(2026, 9, 4, 0, 0, s)).toISOString()
 function decision(n: number, level: 'silent' | 'display' | 'speak', trace: Partial<Trace> = {}, session = 'judge-01') {
@@ -83,6 +83,19 @@ describe('a question’s wait, step by step', () => {
   it('says when a new frame was taken, and shows the voice as ready until the phone reports it playing', () => {
     const mind = load([answer({ mode: 'ask', frame: { source: 'fresh', age_ms: 0 }, latency_ms: { context: 180, first_word: 700, display: 1100, speech: 1300, total: 1500 } })])
     expect(askLine(mind.events[0] as AnswerEvent)).toBe('Took a new frame. First word 700 ms, on the glasses 1.1 s, voice ready 1.3 s, answer written 1.5 s.')
+  })
+})
+
+describe('System 1’s second opinion', () => {
+  it('shows the probability, and the vision model’s own urgency when Jev changed it', () => {
+    const mind = load([decision(1, 'silent', { ...looked, urgency: 3, jev: { probability: 0.31, model: 'typesafe-ai/jev', ms: 180, watch_urgency: 8 } })])
+    expect(jevLine((mind.events[0] as Decision).trace)).toBe('Jev: 31% worth interrupting. The vision model alone said urgency 8.')
+    const agreed = load([decision(1, 'speak', { ...looked, urgency: 9, jev: { probability: 0.9, model: 'm', ms: 150, watch_urgency: 9 } })])
+    expect(jevLine((agreed.events[0] as Decision).trace)).toBe('Jev: 90% worth interrupting.')
+  })
+  it('says nothing when the gate ran without Jev', () => {
+    const mind = load([decision(1, 'silent', looked), decision(2, 'silent', { ...looked, jev: 'broken' as never })])
+    expect(mind.events.map(e => jevLine((e as Decision).trace))).toEqual(['', ''])
   })
 })
 

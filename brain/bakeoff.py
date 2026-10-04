@@ -4,6 +4,8 @@
   python bakeoff.py snap snack_label.jpg   # save a frame from the glasses camera to bakeoff/photos/
   python bakeoff.py                        # every model below on every row of bakeoff/labels.csv
   python bakeoff.py xai:grok-4.20-non-reasoning openrouter:meta/muse-spark-1.3
+  python bakeoff.py jev                    # the current gate against Jev as System 1 (jev.py), on the same photos
+  python bakeoff.py jev --set DIR          # ...on another labelled set: DIR/labels.csv and DIR/photos/
 
 labels.csv: answer_must_contain is checked against the answer for rows with a question, and against
 the nudge (display + spoken line) for rows without one, e.g. "56" for the whiteboard mistake.
@@ -24,6 +26,7 @@ import httpx
 from PIL import Image, ImageDraw, ImageFont
 
 import gate
+import jev
 import llm
 import prompts
 
@@ -169,6 +172,66 @@ async def main(models):
     print(f"spent about ${llm.usd_today():.3f} on {llm.calls_today()} calls; wrote {HERE / 'results.json'}")
 
 
+# Questions with the mode each should get, for comparing the rules in prompts.pick_mode with Jev.
+MODE_QUESTIONS = [
+    ("how much protein is in this?", "ask"), ("is this vegan", "ask"), ("how much does this cost", "ask"),
+    ("what is this?", "identify"), ("what am I looking at", "identify"), ("what kind of plant is this", "identify"),
+    ("read this", "read"), ("what does that say?", "read"), ("can you read that sign for me", "read"),
+    ("where did I leave my keys", "recall"), ("where's my phone", "recall"), ("when did I see the whiteboard", "recall"),
+    ("have you seen my water bottle", "recall"), ("what's written on the board", "read"),
+]
+
+
+async def jev_bench(where):
+    """The gate as it is (the vision model's urgency) against the gate with Jev's probability, photo by photo.
+    Both use the same vision reply, so the only difference is who decides how much the moment matters."""
+    rows = list(csv.DictReader(open(where / "labels.csv", newline="")))
+    rows = [r for r in rows if (where / "photos" / r["photo"]).exists() or print("missing photo:", r["photo"])]
+    if not rows:
+        sys.exit(f"no photos in {where / 'photos'}: take them with `python bakeoff.py snap <name>.jpg`")
+    out, added = [], []
+    for r in rows:
+        jpeg = (where / "photos" / r["photo"]).read_bytes()
+        text, _first, watch_ms, err = await timed(llm.WATCH, llm.messages(prompts.WATCH, prompts.build_watch({}), jpeg))
+        w = llm.parse_json(text) or {}
+        now = gate.Gate().decide(w)[0] if w else "silent"
+        opinion = await jev.interrupt(w, budget=8) if (w.get("text") or w.get("say")) else None
+        with_jev = gate.Gate().decide({**w, "urgency": jev.urgency(opinion["probability"])})[0] if opinion else now
+        if opinion:
+            added.append(opinion["ms"])
+        out.append(dict(photo=r["photo"], expected=r["expected_level"], watch_urgency=w.get("urgency"), gate_now=now,
+                        jev_probability=opinion and opinion["probability"], gate_with_jev=with_jev,
+                        watch_ms=watch_ms, jev_ms=opinion and opinion["ms"],
+                        line=f"{w.get('text') or ''} | {w.get('say') or ''}"[:120], error=err))
+        print(f"  {r['photo']:26} expected {r['expected_level']:7} now {now:7} (urgency {w.get('urgency')!s:>4})  "
+              f"with Jev {with_jev:7} (p {opinion['probability'] if opinion else '-'!s:>5}, {opinion['ms'] if opinion else '-'} ms)", flush=True)
+
+    def score(key):
+        return dict(
+            accuracy=round(sum(o[key] == o["expected"] for o in out) / len(out), 2),
+            false_nudges=sum(o["expected"] == "silent" and o[key] != "silent" for o in out),
+            missed=sum(o["expected"] != "silent" and o[key] == "silent" for o in out),
+        )
+
+    modes = []
+    for q, expected in MODE_QUESTIONS:
+        t0 = time.monotonic()
+        picked = await jev.mode(q, budget=8)
+        modes.append(dict(question=q, expected=expected, rules=prompts.pick_mode(q)[0], jev=picked,
+                          jev_ms=round((time.monotonic() - t0) * 1000)))
+    summary = dict(
+        at=time.strftime("%Y-%m-%d %H:%M"), photos=len(out), watch_model=llm.WATCH, jev_model=jev.MODEL,
+        gate_now=score("gate_now"), gate_with_jev=score("gate_with_jev"),
+        jev_answered=f"{len(added)}/{sum(1 for o in out if o['line'].strip(' |'))}", jev_added_ms_p50=p50(added),
+        mode_accuracy=dict(rules=round(sum(m["rules"] == m["expected"] for m in modes) / len(modes), 2),
+                           jev=round(sum(m["jev"] == m["expected"] for m in modes) / len(modes), 2),
+                           jev_ms_p50=p50([m["jev_ms"] for m in modes]), questions=len(modes)),
+    )
+    (where / "jev_results.json").write_text(json.dumps(dict(summary=summary, photos=out, modes=modes), indent=1))
+    print(json.dumps(summary, indent=1))
+    print(f"spent about ${llm.usd_today():.3f}; wrote {where / 'jev_results.json'}")
+
+
 def board_jpeg():
     """A clean synthetic whiteboard with one planted mistake (7 x 8 = 54)."""
     img = Image.new("RGB", (800, 600), "white")
@@ -207,6 +270,8 @@ if __name__ == "__main__":
         (HERE / "photos").mkdir(parents=True, exist_ok=True)
         (HERE / "photos" / name).write_bytes(r.content)
         print("saved", HERE / "photos" / name)
+    elif args[:1] == ["jev"]:
+        asyncio.run(jev_bench(Path(args[args.index("--set") + 1]).expanduser() if "--set" in args else HERE))
     elif args[:1] == ["ping"]:
         asyncio.run(ping(args[1:] or MODELS))
     else:

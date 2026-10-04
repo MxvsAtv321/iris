@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 import ahead
 import gate
+import jev
 import live
 import llm  # loads .env
 import prompts
@@ -294,7 +295,7 @@ async def decision(sid, fid, level, reason, box, text="", speak="", trace=None):
 # Every decision's trace has all of these keys; a frame the model never judged keeps the blanks.
 BLANK_TRACE = dict(frame_url=None, looked=False, skipped=None, change=None, saw="", why="", topic="", model=None,
                    candidate={"text": "", "say": ""}, urgency=None, display_at=gate.DISPLAY_AT, speak_at=gate.SPEAK_AT,
-                   proposed="silent", rules=[], blocked_by=None, latency_ms={}, ahead=None)
+                   proposed="silent", rules=[], blocked_by=None, latency_ms={}, jev=None, ahead=None)
 
 
 AHEAD_ASKS = ("phone", "keys", "water bottle")   # what memory is asked about when the notes say nothing
@@ -376,6 +377,12 @@ async def tick(sid, fid, trace):
         trace["ahead"] = left
         w = {**w, **ahead.nudge(left)}
     line, say = str(w.get("text") or "")[:40], str(w.get("say") or "")
+    if jev.ON and (line or say):       # Iris has something it could say: System 1 decides how much it matters
+        opinion = await jev.interrupt(w, s["said"])
+        if opinion:                    # no usable answer in time: the vision model's own urgency stands
+            trace["jev"] = {**opinion, "watch_urgency": w.get("urgency")}
+            lat["jev"] = opinion["ms"]
+            w = {**w, "urgency": jev.urgency(opinion["probability"])}
     t_gate = time.perf_counter()
     level, reason, judged = gates[sid].explain(w)
     lat["gate"] = round((time.perf_counter() - t_gate) * 1000, 3)
@@ -457,6 +464,8 @@ async def metrics_loop():
 async def keep_warm_once():
     """Touch every provider a question can need: the models, the voice and memory. Never raises."""
     jobs = [llm.warm(), voice.warm(http)]
+    if jev.ON:
+        jobs.append(http.head(jev.URL, timeout=3))
     if memory_client:
         jobs.append(memory_client().warm())
     await asyncio.gather(*jobs, return_exceptions=True)
@@ -608,6 +617,12 @@ async def ask(q: AskIn):
 
     # Camera, memory and live data are fetched side by side; none of them raises.
     shot = asyncio.create_task(grab(shot_info))
+    mode_by = "rules"
+    if jev.ON:                         # System 1 picks the mode while the frame is fetched; the rules' pick stands if it is slow
+        picked = await jev.mode(question)
+        lat["mode"] = ms()
+        if picked:
+            mode, mode_by = picked, "jev"
     memo_task = asyncio.create_task(recall(sid, question)) if mode == "recall" else None
     live_task = asyncio.create_task(live.note(question, http)) if live.topics(question) else None
     if live_task and mode == "ask" and not prompts.DEICTIC.search(question):
@@ -657,7 +672,7 @@ async def ask(q: AskIn):
         bg(remember_ask(sid, shot, question, speak or display))
     save_state()
     used = mode != "live" and shot_info.get("source") in ("recent", "fresh")
-    trace = {"mode": mode, "latency_ms": lat,
+    trace = {"mode": mode, "mode_by": mode_by, "latency_ms": lat,
              "frame": {"source": shot_info["source"], "age_ms": shot_info["age_ms"]} if used else None}
     log.info("ask %s mode=%s frame=%s %s sources=%s", ask_id, mode, trace["frame"], lat, sources)
     sent = dict(lat)

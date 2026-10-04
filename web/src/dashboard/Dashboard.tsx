@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
-import { aheadLine, askLine, keyOf, lullLine, ms, RULE_LABEL, thoughts, verdict, type AnswerEvent, type Decision, type Metrics, type MindEvent, type Tally, type Thought } from './mind'
+import { aheadLine, askLine, jevLine, keyOf, lullLine, ms, RULE_LABEL, thoughts, verdict, type AnswerEvent, type Decision, type Metrics, type MindEvent, type Tally, type Thought } from './mind'
 import { useMind } from './useMind'
 import './dashboard.css'
 
@@ -143,6 +143,7 @@ function Moment({ decision, expanded, held, onPin, style }: { decision: Decision
         {t.why && t.why !== t.saw ? t.why : t.urgency === null ? 'No urgency came back.' : `Urgency ${t.urgency} of 10.`}
         {expanded && t.urgency !== null && <Urgency urgency={t.urgency} displayAt={t.display_at} speakAt={t.speak_at} />}
         {!expanded && t.urgency !== null && <span className="mind-aside"> Urgency {t.urgency}.</span>}
+        {t.jev && <span className="mind-aside mind-jev"> {jevLine(t)}</span>}
         {t.ahead && <span className="mind-aside mind-ahead"> {aheadLine(t)}</span>}
         {expanded && checked && <ol className="mind-rules">{t.rules.map(r => <li key={r.rule} data-outcome={r.outcome}>
           <span>{RULE_LABEL[r.rule]}</span>
@@ -153,7 +154,7 @@ function Moment({ decision, expanded, held, onPin, style }: { decision: Decision
         <strong>{v.did}.</strong>{v.because && ` ${v.because}`}
         {v.said && <q>{v.said}</q>}
         {v.heldBack && <span className="mind-held">It had this ready: <q>{v.heldBack}</q></span>}
-        {expanded && <span className="mind-latency">Capture {ms(lat.capture)}, model {ms(lat.model)}, gate {ms(lat.gate)}{t.model ? `, with ${t.model.split(':').pop()}` : ''}</span>}
+        {expanded && <span className="mind-latency">Capture {ms(lat.capture)}, model {ms(lat.model)}{lat.jev !== undefined ? `, Jev ${ms(lat.jev)}` : ''}, gate {ms(lat.gate)}{t.model ? `, with ${t.model.split(':').pop()}` : ''}</span>}
       </dd></div>
     </dl>
   </article>
