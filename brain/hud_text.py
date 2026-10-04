@@ -122,26 +122,64 @@ def _tidy(text):
     return re.sub(r" +([,.;:!?])", r"\g<1>", re.sub(r" +", " ", text)).strip(" ,;:-")
 
 
+def _small(text):
+    """The words of text that the display's small built-in font can show whole (the firmware falls back to it for
+    text no bold size fits): 6 pixels a character, 8 a line. "" when even the first word is too long."""
+    per, max_lines = SAFE_W // 6, min(8, SAFE_H // 8)
+    words = text.split(" ")
+    while words:
+        lines, line = 1, ""
+        for w in words:
+            trial = f"{line} {w}" if line else w
+            if len(trial) <= per:
+                line = trial
+            else:
+                lines, line = lines + 1, w
+        if all(len(w) <= per for w in words) and lines <= max_lines:
+            return " ".join(words)
+        words.pop()
+    return ""
+
+
 def display(text):
     """The line the brain sends to the glasses: the text itself when it fits at a comfortable size, otherwise
     shortened at a word until it does. Filler words go first, then words off the end, and it never ends on a word
     like "with" or "by". Never cut inside a word, unless one word alone is wider than the display. The models are
     asked for a short line; this is the safety net."""
-    t = clean(text)
+    t = re.sub(r" ?= ?", " = ", clean(text)).strip()        # "7x8=56" can break at the equals sign
     if size_of(t) >= COMFORTABLE:
         return t
     lean = _tidy(FILLER.sub("", t)) or t
-    if size_of(lean) >= COMFORTABLE:
-        return lean
     words = lean.split(" ")
     # a word too wide for the comfortable size ("Wednesday") is shown smaller rather than dropped
     aim = COMFORTABLE if all(width(COMFORTABLE, w) <= SAFE_W for w in words) else TIERS[-1][0]
+    for whole in (t, lean):
+        if size_of(whole) >= aim:
+            return whole
     while len(words) > 1 and (size_of(" ".join(words)) < aim or words[-1].lower().strip(",.;:") in DANGLING):
         words.pop()
     short = _tidy(" ".join(words))
+    if size_of(short):
+        return short
+    whole = _small(lean)                     # no bold size holds even one word: small, but every word whole
+    if whole:
+        return whole
     while short and not size_of(short):      # one word wider than the display at any size: its start is all that fits
         short = short[:-1]
     return short
+
+
+def hint():
+    """A sentence for the models when the display's text area has been made much narrower than usual (/calibrate
+    moved it to the edge of the screen), so they write a line that fits it. "" at the usual size."""
+    if SAFE_W >= 100:
+        return ""
+    per = max(3, round(SAFE_W / 12))
+    lines = 2 if SAFE_H >= 46 else 1
+    return (f"The glasses display is very narrow right now. Its line must be at most {lines} word{'s' * (lines > 1)}, each at most "
+            f'{per} characters, with no longer word in it: a number with a short unit ("12g", "210 cal", "$5"), '
+            f'"Yes" or "No", or a short fix like "7x8 = 56". Never a word longer than {per} characters. '
+            "Everything else goes in the spoken sentence.")
 
 
 if __name__ == "__main__":
@@ -174,5 +212,12 @@ if __name__ == "__main__":
     # the display was calibrated to a smaller area: the same text now needs a smaller size, or fewer words
     assert set_area(90, 40) and (SAFE_W, SAFE_H) == (90, 40) and not set_area(10, 10) and not set_area("x", None)
     assert fit("12g")[0] == 18 and fit("Stay in")[0] == 12 and size_of(display("Line 2: 7x8 is 56")) >= 12
-    assert set_area(*DEFAULT_AREA) and fit("Stay in")[0] == 18
+    # moved to the edge of the screen, the area is very narrow: whole words, never the start of one
+    assert set_area(48, 48) and display("12g protein") == "12g" and display("7x8 = 56") == "7x8 = 56"
+    assert display("7x8=56") == "7x8 = 56" and fit("7x8 = 56") == (12, ["7x8", "= 56"])
+    assert display("Stay in") == "Stay in" and display("Step down") == "Step down"
+    assert display("Phone's on table") == "Phone's on table" and fit("Phone's on table") is None     # the small font shows it
+    assert display("Laptop") == "Laptop" and display("Stove on") == "Stove on"
+    assert "at most 2 words, each at most 4 characters" in hint()
+    assert set_area(*DEFAULT_AREA) and fit("Stay in")[0] == 18 and hint() == ""
     print("hud_text ok")

@@ -43,7 +43,7 @@ Response:
 }
 ```
 
-`level` is one of `silent`, `display`, `speak`. `speak` may be an empty string. Never returns a 500: on failure `display` is "Say that again?".
+`level` is one of `silent`, `display`, `speak`. `speak` may be an empty string. Never returns a 500: on failure `display` is "Say again".
 
 Two optional fields carry what the phone measured before it sent the question, in ms: `wake_ms` (from hearing "Iris") and `listen_ms` (from the mic opening). They only feed the dashboard's timings.
 

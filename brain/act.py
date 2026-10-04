@@ -17,7 +17,7 @@ import prompts
 log = logging.getLogger("iris.act")
 
 BRAIN = os.getenv("BRAIN_URL") or "http://127.0.0.1:8000"
-FALLBACK = "Say that again?"
+FALLBACK = "Say again"
 
 RECALL = re.compile(
     r"\b(where did i|when did i|did i (leave|see|put)|where('s| is) my|what was (that|the)|"

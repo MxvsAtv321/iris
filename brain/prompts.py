@@ -97,11 +97,17 @@ def _context(s):
     return parts
 
 
+def _narrow(field):
+    """When the display's text area has been made narrow, say so, so the line is written to fit it."""
+    hint = hud_text.hint()
+    return [f"About {field}: {hint}"] if hint else []
+
+
 def build_watch(s):
     parts = _context(s)
     if s.get("said"):
         parts.append("Already told the wearer (do not repeat):\n" + format_lines(s["said"], 3))
-    return "\n\n".join(parts + ["Judge this photo."])
+    return "\n\n".join(parts + _narrow("text") + ["Judge this photo."])
 
 
 def build_ask(question, s, memory_note="", live_note=""):
@@ -110,7 +116,7 @@ def build_ask(question, s, memory_note="", live_note=""):
         parts.append("Memory notes:\n" + memory_note)
     if live_note:
         parts.append("Live data (fetched just now; use it only if the question needs it):\n" + live_note)
-    return "\n\n".join(parts + ["Question: " + question])
+    return "\n\n".join(parts + _narrow("line 1") + ["Question: " + question])
 
 
 LABEL = re.compile(r"^\s*(line\s*\d\s*[:.)-]\s*|display\s*:\s*|spoken?\s*:\s*)", re.I)
@@ -162,4 +168,9 @@ if __name__ == "__main__":
     assert first_sentence("Yes. It has 12 grams of protein. That") == "Yes. It has 12 grams of protein."
     assert first_sentence(split_answer("12g protein\nThat bar has 12 grams! Enjoy")[1]) == "That bar has 12 grams!"
     assert first_sentence("") == "" and first_sentence(None) == ""
+    assert "narrow" not in build_ask("q", {}) and "narrow" not in build_watch({})
+    hud_text.set_area(48, 48)                                                        # the display was moved to the screen's edge
+    assert "About line 1: The glasses display is very narrow" in build_ask("q", {}) and "About text:" in build_watch({})
+    assert split_answer("12g protein\nTwelve grams.")[0] == "12g"
+    hud_text.set_area(*hud_text.DEFAULT_AREA)
     print("prompts ok")

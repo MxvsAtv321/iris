@@ -50,7 +50,7 @@ WATCH_TIMEOUT_S = 12           # per model; the loop can wait, a reasoning watch
 # is fine). If it hasn't started writing after WATCH_LATE_S, this model is asked too and whichever starts first is used.
 WATCH_LATE_MODEL = (os.getenv("WATCH_LATE_MODEL") or "").strip()
 WATCH_LATE_S = float(os.getenv("WATCH_LATE_S") or 2.5)
-FALLBACK = "Say that again?"      # short enough for the glasses at a readable size
+FALLBACK = "Say again"            # short enough for the glasses even when the text area is narrow
 NO_PHOTO = "\n(The camera didn't respond, so there is no photo. If the question needs one, say you can't see right now.)"
 HERE = Path(__file__).resolve().parent
 STATE = Path(os.getenv("IRIS_STATE") or HERE / "state.json")   # a second brain on this laptop (tests) must not share the first one's
