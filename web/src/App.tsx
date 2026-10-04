@@ -21,14 +21,16 @@ export default function App() {
   const dashboard = location.pathname === '/dashboard'
   const garden = location.pathname === '/garden'
   useEffect(() => {
-    if (dashboard) return   // the dashboard only watches: opening or reloading it must not start or restart a session
+    // The dashboard and the garden only watch. Starting a session makes it the brain's one active session,
+    // so opening either on a second screen must not take the glasses away from the judge wearing them.
+    if (dashboard || garden) return
     const controller = new AbortController()
     setSessionOnline(false)
     void startSession(session, controller.signal).then(ok => {
       if (!controller.signal.aborted) setSessionOnline(ok)
     })
     return () => controller.abort()
-  }, [session, dashboard])
+  }, [session, dashboard, garden])
   const [draft, setDraft] = useState(session)
   const [demo, setDemo] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)

@@ -17,7 +17,9 @@ from fastapi.responses import Response, StreamingResponse
 from PIL import Image
 from pydantic import BaseModel
 
+import ahead
 import gate
+import jev
 import live
 import llm  # loads .env
 import prompts
@@ -293,7 +295,35 @@ async def decision(sid, fid, level, reason, box, text="", speak="", trace=None):
 # Every decision's trace has all of these keys; a frame the model never judged keeps the blanks.
 BLANK_TRACE = dict(frame_url=None, looked=False, skipped=None, change=None, saw="", why="", topic="", model=None,
                    candidate={"text": "", "say": ""}, urgency=None, display_at=gate.DISPLAY_AT, speak_at=gate.SPEAK_AT,
-                   proposed="silent", rules=[], blocked_by=None, latency_ms={})
+                   proposed="silent", rules=[], blocked_by=None, latency_ms={}, jev=None, ahead=None)
+
+
+AHEAD_ASKS = ("phone", "keys", "water bottle")   # what memory is asked about when the notes say nothing
+
+
+async def left_behind(sid, s, description):
+    """What the wearer is walking away from, or None. Never raises.
+    The session's own notes answer first: they are instant, and hold the last 20 scenes. For a thing they
+    never mention, memory is asked where it was last seen (quietly: nobody asked, so the garden stays put)."""
+    if not ahead.ON or not ahead.leaving(description):
+        return None
+    found = ahead.left_behind(description, s["descriptions"])
+    if found or not memory_client:
+        return found
+    known = ahead.items_in(description).union(*(ahead.items_in(d) for d in s["descriptions"]))
+    wanted = [item for item in AHEAD_ASKS if item not in known]
+    try:
+        hits = await asyncio.wait_for(asyncio.gather(*(
+            memory_client().search(sid, f"where did I leave my {item}", target=item, quiet=True) for item in wanted)), 1.5)
+    except Exception as e:  # noqa: BLE001 - memory is slow or down: no nudge is the safe answer
+        log.info("think ahead: memory did not answer: %s", e)
+        return None
+    for item, hit in zip(wanted, hits):
+        moment = hit.get("moment") or {}
+        found = ahead.left_at(item, moment.get("description")) if moment.get("keyword_match") else None
+        if found:
+            return {**found, "moment_id": moment.get("id")}
+    return None
 
 
 async def tick(sid, fid, trace):
@@ -338,7 +368,21 @@ async def tick(sid, fid, trace):
         lat["total"] = ms(t0)
         return await decision(sid, fid, "silent", "bad model output", None, trace=trace)
     box = watch["box"] = gate.to_focus_box(w.get("box_2d"))
+    left = await left_behind(sid, s, str(w.get("description") or ""))
+    try:
+        busy = float(w.get("urgency") or 0) >= gate.SPEAK_AT      # something in view matters more than what was left
+    except (TypeError, ValueError):
+        busy = False
+    if left and not busy:
+        trace["ahead"] = left
+        w = {**w, **ahead.nudge(left)}
     line, say = str(w.get("text") or "")[:40], str(w.get("say") or "")
+    if jev.ON and (line or say):       # Iris has something it could say: System 1 decides how much it matters
+        opinion = await jev.interrupt(w, s["said"])
+        if opinion:                    # no usable answer in time: the vision model's own urgency stands
+            trace["jev"] = {**opinion, "watch_urgency": w.get("urgency")}
+            lat["jev"] = opinion["ms"]
+            w = {**w, "urgency": jev.urgency(opinion["probability"])}
     t_gate = time.perf_counter()
     level, reason, judged = gates[sid].explain(w)
     lat["gate"] = round((time.perf_counter() - t_gate) * 1000, 3)
@@ -420,6 +464,8 @@ async def metrics_loop():
 async def keep_warm_once():
     """Touch every provider a question can need: the models, the voice and memory. Never raises."""
     jobs = [llm.warm(), voice.warm(http)]
+    if jev.ON:
+        jobs.append(http.head(jev.URL, timeout=3))
     if memory_client:
         jobs.append(memory_client().warm())
     await asyncio.gather(*jobs, return_exceptions=True)
@@ -545,7 +591,6 @@ async def ask(q: AskIn):
     mode, question = prompts.pick_mode(q.text)
     s, g = session(sid), gates[sid]
     g.hold()
-    asking += 1
     bg(eye("thinking"))            # the eye thinks while the model works; it opens first if the wake word didn't
     out, first_ms, shown, sources, said, spoken_parts, shot_info = "", None, False, [], "", 0, {}
     # Every step's time in ms from the question arriving; `wake` and `listen` are the phone's own measurements.
@@ -572,11 +617,18 @@ async def ask(q: AskIn):
 
     # Camera, memory and live data are fetched side by side; none of them raises.
     shot = asyncio.create_task(grab(shot_info))
+    mode_by = "rules"
+    if jev.ON:                         # System 1 picks the mode while the frame is fetched; the rules' pick stands if it is slow
+        picked = await jev.mode(question)
+        lat["mode"] = ms()
+        if picked:
+            mode, mode_by = picked, "jev"
     memo_task = asyncio.create_task(recall(sid, question)) if mode == "recall" else None
     live_task = asyncio.create_task(live.note(question, http)) if live.topics(question) else None
     if live_task and mode == "ask" and not prompts.DEICTIC.search(question):
         mode = "live"   # answered from live data alone: no photo to wait for or upload
-    try:
+    asking += 1         # counted only where the `finally` below is certain to take it back: a count
+    try:                # left behind would keep the watch loop skipping every frame as "question in progress"
         async with asyncio.timeout(ASK_TIMEOUT_S):
             memo = await memo_task if memo_task else ""
             live_note, sources = await live_task if live_task else ("", [])
@@ -620,7 +672,7 @@ async def ask(q: AskIn):
         bg(remember_ask(sid, shot, question, speak or display))
     save_state()
     used = mode != "live" and shot_info.get("source") in ("recent", "fresh")
-    trace = {"mode": mode, "latency_ms": lat,
+    trace = {"mode": mode, "mode_by": mode_by, "latency_ms": lat,
              "frame": {"source": shot_info["source"], "age_ms": shot_info["age_ms"]} if used else None}
     log.info("ask %s mode=%s frame=%s %s sources=%s", ask_id, mode, trace["frame"], lat, sources)
     sent = dict(lat)

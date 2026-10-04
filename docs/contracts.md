@@ -153,7 +153,7 @@ One JSON message per event. Every message has `type`, `session_id` and `at` (ISO
 - `moments_seen` counts every decision in the running session, and `moments_silent` + `moments_shown` + `moments_spoken` add up to it.
 - **Phone audio:** play speech only from WebSocket events. A `decision` with `level: "speak"` means fetch `/api/tts?text=<speak>`. An answer's voice arrives as `speech` events: play each one's `audio_url`, in `seq` order, and then do not also speak the `answer` that follows with the same `ask_id`. An `answer` with non-empty `speak` and no `speech` events before it (a brain with early speech turned off) means fetch `/api/tts?text=<speak>` as before. Never play from the `/api/ask` HTTP response, or it plays twice. Unlock audio with a tap at session start, because mobile browsers block autoplay.
 - `speech` is one part of an answer's spoken line, sent as soon as the words exist: the first sentence while the rest is still being written, then the remainder (`seq` 0, then 1). The parts joined with a space are the `answer`'s `speak`. The brain is already fetching the audio when the event goes out.
-- `answer.trace` is where the question's time went. `latency_ms` is in ms from the question reaching the brain: `context` (frame, memory and live data in hand), `first_word` (the model's first text), `display` (the glasses confirmed the line), `speech` (the first audio bytes reached the brain), `total` (the answer complete). `wake` and `listen` are the phone's `wake_ms` and `listen_ms`. `first_audio` is the phone's report to `/api/timing`. A step is missing when it didn't happen (no display, no voice). `frame` is the photo the answer used: `source` is `recent` (already in hand, `age_ms` old) or `fresh` (taken for this question); `null` when the answer used no photo. `mode` is `ask`, `identify`, `read`, `recall` or `live`.
+- `answer.trace` is where the question's time went. `latency_ms` is in ms from the question reaching the brain: `context` (frame, memory and live data in hand), `first_word` (the model's first text), `display` (the glasses confirmed the line), `speech` (the first audio bytes reached the brain), `total` (the answer complete). `wake` and `listen` are the phone's `wake_ms` and `listen_ms`. `first_audio` is the phone's report to `/api/timing`. A step is missing when it didn't happen (no display, no voice). `frame` is the photo the answer used: `source` is `recent` (already in hand, `age_ms` old) or `fresh` (taken for this question); `null` when the answer used no photo. `mode` is `ask`, `identify`, `read`, `recall` or `live`; `mode_by` is `rules`, or `jev` when the brain runs with `JEV_GATE=1` and Jev picked it (`latency_ms.mode` is then how long that took).
 - `answer_timing` carries the whole `latency_ms` again whenever a step finishes after the `answer` went out (usually `display`, `speech` or `first_audio`). Replace the answer's `trace.latency_ms` with it.
 - `first_audio_ms_p50` is the median of the phones' `first_audio` reports; `null` until one arrives.
 
@@ -182,7 +182,9 @@ Every `decision` carries `trace`: how Iris got to that verdict. All keys are alw
   ],
   "blocked_by": "cooldown",
   "verdict": "silent",
-  "latency_ms": { "capture": 164, "model": 2380, "gate": 0.05, "total": 2551 }
+  "latency_ms": { "capture": 164, "model": 2380, "gate": 0.05, "total": 2551 },
+  "jev": null,
+  "ahead": null
 }
 ```
 
@@ -194,6 +196,8 @@ Every `decision` carries `trace`: how Iris got to that verdict. All keys are alw
 - `rules` are the gate's four rules in the order it checks them. `outcome` is `passed`, `blocked`, `softened` (only `rate_limit`: spoken too recently, so the line is shown instead) or `not_checked` (urgency was under `display_at`, so there was nothing to hold back). Every rule is worked out even after one blocks; `blocked_by` names the first that blocked, which is the one that decided, or is `null`. `repeat` also carries its `similarity` and `threshold`. `quiet_after_answer` covers the 10 s after a question is asked or answered, or the wake word is heard. `detail` is a plain phrase to show as it is. `rules` is empty when the frame wasn't looked at.
 - `verdict` is the same as the decision's `level`.
 - `latency_ms`: `capture` is the camera request, `model` the vision call, `gate` the rules, `total` the whole tick. `model` and `gate` are missing when the frame wasn't looked at.
+- `jev` is `null` unless the brain runs with `JEV_GATE=1` (off by default) and Jev answered in time for this frame. Then it is `{ "probability": 0.88, "model": "typesafe-ai/jev", "ms": 210, "watch_urgency": 8 }`: Jev's chance that the moment is worth an interruption, which replaced the vision model's own urgency (`watch_urgency`) before the rules ran. `urgency` is then that probability times ten, rounded, and `latency_ms.jev` is the call. Jev is only asked when the vision model has a line ready.
+- `ahead` is `null` except when Iris is thinking ahead: the scene is a doorway, a corridor or the outdoors, and something the wearer carries was last seen resting on a surface and is not in view. Then it is `{ "item": "phone", "place": "table", "seen": "A phone on a wooden table.", "at": "19:02" }` (plus `moment_id` when memory supplied the sighting), and the decision's line is about that thing: `text` "Phone's on the table", `speak` "Your phone is still on the table.", urgency 8, topic `left-behind-phone`. The gate's rules still apply, so it is said once. It is off unless the brain runs with `THINK_AHEAD=1`.
 
 ## Memory (Darren)
 
@@ -285,7 +289,7 @@ Under `${MEMORY_URL}/api/memory`. Reads are scoped to one judge's session, from 
 | Route | Who calls it | What it does |
 | --- | --- | --- |
 | `POST /ingest` | brain, through `save_moment` | Saves a frame. Raw JPEG body. Headers `Authorization: Bearer <INGEST_TOKEN>`, `X-Session-Id`, `X-Captured-At` (ISO 8601), `X-Description` (URI-encoded), and `X-Image-Hash` (16 hex characters; `save_moment` adds it). Returns `{ "saved": true, "id": 42, "skipped": null, "description": "...", "ms": 310 }`. For a duplicate of the session's last moment, `saved` is false, `id` is null and `skipped` says why: `same_image`, `same_scene` or `same_description`. |
-| `POST /search` | brain router, garden | `{ "session_id", "question", "target"? }`. Without `target`, the object is picked out of the question's words, with no model call. Returns `{ "search_id", "target", "moment", "top", "ms" }`, where `moment` is the match or `null` and `top` is the five closest by meaning. |
+| `POST /search` | brain router, garden | `{ "session_id", "question", "target"?, "quiet"? }`. Without `target`, the object is picked out of the question's words, with no model call. With `"quiet": true` the search is not logged, so the garden does not follow it and `search_id` is `null`; the brain uses it when it looks something up for itself. Returns `{ "search_id", "target", "moment", "top", "ms" }`, where `moment` is the match or `null` and `top` is the five closest by meaning. |
 | `GET /moments?session_id=&limit=` | garden | Every moment in the session, oldest first |
 | `GET /moments/:id/image?session_id=` | garden, phone page | The JPEG, served from the `uploads` bucket |
 | `GET /moments/:id/depth?session_id=` | garden | The cached depth map PNG from the bucket, or 404 until the garden makes one |
