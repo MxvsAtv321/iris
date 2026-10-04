@@ -7,14 +7,15 @@ resting on a table or a desk, and is not in view now, it nudges: "Phone's on the
 It reads the session's own notes first, and asks memory when those say nothing. The nudge then goes
 through the gate like any other, so the cooldown and repeat rules keep it to once.
 
-  THINK_AHEAD=0   turns it off
+  THINK_AHEAD=1   turns it on. It is off by default until it has been tried on the glasses: whether it
+                  fires depends on how the vision model words a doorway and a phone on a table.
 
 Run `python ahead.py` for the self-check (no network).
 """
 import os
 import re
 
-ON = (os.getenv("THINK_AHEAD") or "1") != "0"
+ON = (os.getenv("THINK_AHEAD") or "0") == "1"
 URGENCY = 8     # something about to be missed: worth saying out loud, once
 ITEMS = {       # what people carry and leave behind -> how a description names it
     "phone": r"\b(phone|smartphone|iphone|cell ?phone)\b",
@@ -159,6 +160,7 @@ if __name__ == "__main__":
 
     async def loop_check():
         screen, shades = Screen(), iter(range(10, 250, 20))
+        main.ahead.ON = True
         main.clients.add(screen)
         main.save_state = lambda: None
         main.save_moment = None
@@ -215,7 +217,6 @@ if __name__ == "__main__":
         main.state["sessions"].pop("ahead-off", None)
         await look("ahead-off", table)
         assert (await look("ahead-off", doorway))["level"] == "silent"
-        main.ahead.ON = True
         for sid in [k for k in main.state["sessions"] if k.startswith("ahead-")]:
             main.state["sessions"].pop(sid)
 
