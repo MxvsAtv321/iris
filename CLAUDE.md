@@ -22,7 +22,7 @@ The exact endpoints and data shapes are in `docs/contracts.md`. Read it before w
 ## Hardware facts
 
 - Camera: `GET http://172.20.10.4/capture` returns one JPEG in about 0.16 s.
-- Display: `GET http://172.20.10.6/show?text=...` shows text; `/clear` clears it. Keep text under 40 characters for the large font.
+- Display: `GET http://172.20.10.6/show?text=...` shows text; `/clear` clears it. Keep text to about 18 characters: short text is drawn larger. `/test` and `/calibrate?x=..&y=..` move it into the part of the screen the lens shows.
 - Always use the IP addresses. The `.local` names add about 5 seconds per request on macOS.
 - Everything runs on the `ShriHotspot` network (2.4 GHz). The password is never written in the repo.
 

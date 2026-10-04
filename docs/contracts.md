@@ -10,12 +10,14 @@ Everyone builds against these shapes. The owner may change their contract: updat
 | `GET http://172.20.10.4/control?var=<name>&val=<n>` | Changes one camera setting until the camera restarts. The brain sends `framesize` 11 (800x600), `vflip` 0 and `hmirror` 1 at startup and at every session start, from `CAMERA_FRAMESIZE`, `CAMERA_VFLIP` and `CAMERA_HMIRROR`. |
 | `GET http://172.20.10.4/status` | The camera's current settings as JSON. With the firmware in `firmware/glasses_cam/` it also has `temp_c`, the chip's temperature in Celsius. |
 | `GET http://172.20.10.4:81/stream` | Live video as MJPEG (`multipart/x-mixed-replace`, each part a JPEG with its `Content-Length`). **One viewer at a time, and that viewer is the brain.** Everything else watches through the brain's `/api/stream`. |
-| `GET http://172.20.10.6/show?text=<url-encoded text>` | Shows the text on the glasses display. Under 40 characters stays in the large font. Returns `ok`. The text stays until it is replaced or cleared. |
+| `GET http://172.20.10.6/show?text=<url-encoded text>` | Shows the text on the glasses display, centred, in a bold font at the largest size that fits: one short word very large ("12g"), two words large ("Stay in"), up to about 18 characters on two lines ("Line 2: 7x8 is 56") at the smallest comfortable size. Longer text still shows, but smaller, so keep to 18 characters; the brain shortens its own lines at a word (`brain/hud_text.py` holds the rule). Returns `ok`. The text stays until it is replaced or cleared. |
 | `GET http://172.20.10.6/show?text=...&eye=answer&hold=<ms>` | The eye blinks, the text shows for `hold` ms (default 4000), then the eye rests open for about 3 s and closes. The eye opens first if it is shut. |
 | `GET http://172.20.10.6/show?text=...&eye=nudge&hold=<ms>` | The eye flicks open and blinks, the text shows for `hold` ms (default 5000), then the display goes dark. |
 | `GET http://172.20.10.6/eye?anim=<name>` | Plays an eye animation at about 30 frames a second: `open`, `listening`, `thinking`, `speaking`, `idle`, `blink`, `close`. The eye opens first if it is shut. `listening`, `thinking` and `speaking` loop until the next call, and close by themselves after 15 s (`&for=<ms>` changes that). `idle` holds the eye open with a blink every 3 to 5 s. Returns `ok`, or 400 for an unknown name. |
 | `GET http://172.20.10.6/clear` | Stops any animation and clears the display. Returns `ok`. |
-| `GET http://172.20.10.6/status` | JSON: `state`, `eye_open`, `fps`, `draw_ms`, `cmd_to_first_frame_ms`. |
+| `GET http://172.20.10.6/status` | JSON: `state`, `eye_open`, `fps`, `draw_ms`, `cmd_to_first_frame_ms`, and where things are drawn: `offset` `{ "x": 0, "y": 0 }` and `area` `{ "w": 116, "h": 52 }`, the space text is fitted into. The brain reads `area` at startup and at every session start. |
+| `GET http://172.20.10.6/test` | Draws a test pattern: a border at the screen's edge, a crosshair at its middle, `TL` `TR` `BL` `BR` in the corners (none of these move), and a dashed box around the area text and the eye are drawn in. Look through the lens to see which part of the screen is visible. Returns `ok`. |
+| `GET http://172.20.10.6/calibrate?x=<px>&y=<px>` | Moves all text and the eye: `x` right (up to ±40), `y` down (up to ±20), as the wearer reads. Saved on the board, so it survives restarts and needs no re-flash. Optional `w` (48 to 128) and `h` (24 to 64) resize the area text is fitted into (116x52 unless changed). Draws the test pattern and returns `{ "offset": {...}, "area": {...} }`; without arguments it changes nothing. |
 
 Use the IPs, never the `.local` names (about 5 s slower per request on macOS).
 
@@ -40,7 +42,7 @@ Response:
 }
 ```
 
-`level` is one of `silent`, `display`, `speak`. `speak` may be an empty string. Never returns a 500: on failure `display` is "Didn't catch that, try again".
+`level` is one of `silent`, `display`, `speak`. `speak` may be an empty string. Never returns a 500: on failure `display` is "Say that again?".
 
 Two optional fields carry what the phone measured before it sent the question, in ms: `wake_ms` (from hearing "Iris") and `listen_ms` (from the mic opening). They only feed the dashboard's timings.
 
@@ -96,7 +98,7 @@ What the dashboard loads when it opens, so it can join a session partway through
 
 ### `POST /api/show`
 
-Request: `{ "text": "Stay in" }`. Puts the text on the glasses display (cut to 40 characters) and returns `{ "text": "Stay in", "shown": true }`. `shown` is false when the text is empty or the display doesn't answer.
+Request: `{ "text": "Stay in" }`. Puts the text on the glasses display and returns `{ "text": "Stay in", "shown": true }`. `text` is the line as shown: one too long to read comfortably (over about 18 characters) is shortened at a word. `shown` is false when the text is empty or the display doesn't answer.
 
 ### `GET /api/tts?text=...`
 
@@ -210,7 +212,7 @@ Every `decision` carries `trace`: how Iris got to that verdict. All keys are alw
 - `verdict` is the same as the decision's `level`.
 - `latency_ms`: `capture` is the camera request, `model` the vision call, `gate` the rules, `total` the whole tick. `model` and `gate` are missing when the frame wasn't looked at.
 - `jev` is `null` unless the brain runs with `JEV_GATE=1` (off by default) and Jev answered in time for this frame. Then it is `{ "probability": 0.88, "model": "typesafe-ai/jev", "ms": 210, "watch_urgency": 8 }`: Jev's chance that the moment is worth an interruption, which replaced the vision model's own urgency (`watch_urgency`) before the rules ran. `urgency` is then that probability times ten, rounded, and `latency_ms.jev` is the call. Jev is only asked when the vision model has a line ready.
-- `ahead` is `null` except when Iris is thinking ahead: the scene is a doorway, a corridor or the outdoors, and something the wearer carries was last seen resting on a surface and is not in view. Then it is `{ "item": "phone", "place": "table", "seen": "A phone on a wooden table.", "at": "19:02" }` (plus `moment_id` when memory supplied the sighting), and the decision's line is about that thing: `text` "Phone's on the table", `speak` "Your phone is still on the table.", urgency 8, topic `left-behind-phone`. The gate's rules still apply, so it is said once. It is off unless the brain runs with `THINK_AHEAD=1`.
+- `ahead` is `null` except when Iris is thinking ahead: the scene is a doorway, a corridor or the outdoors, and something the wearer carries was last seen resting on a surface and is not in view. Then it is `{ "item": "phone", "place": "table", "seen": "A phone on a wooden table.", "at": "19:02" }` (plus `moment_id` when memory supplied the sighting), and the decision's line is about that thing: `text` "Phone's on table", `speak` "Your phone is still on the table.", urgency 8, topic `left-behind-phone`. The gate's rules still apply, so it is said once. It is off unless the brain runs with `THINK_AHEAD=1`.
 
 ## Memory (Darren)
 
