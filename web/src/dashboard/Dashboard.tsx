@@ -5,6 +5,7 @@ import './dashboard.css'
 
 const clock = (at: string | number) => new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })
 const isDecision = (e: MindEvent): e is Decision => e.type === 'decision'
+const LINGER_MS = 8000
 
 function useNow(every: number) {
   const [now, setNow] = useState(Date.now)
@@ -22,15 +23,19 @@ export function Dashboard() {
   const [pinned, setPinned] = useState<string | null>(null)
   const stream = useMemo(() => thoughts(mind.events).reverse(), [mind.events])   // newest first
   const decisions = useMemo(() => mind.events.filter(isDecision), [mind.events])
+  const state = !connected ? 'offline' : !mind.loaded ? 'connecting' : mind.running ? 'live' : mind.events.length ? 'ended' : 'idle'
   const held = pinned ? decisions.find(d => keyOf(d) === pinned) : undefined
-  const shown = held ?? decisions.at(-1)
+  // What Iris just spoke about stays in the frame for a few seconds, or the next capture would replace it at once.
+  const said = decisions.findLast(d => d.level !== 'silent')
+  const age = said ? now - Date.parse(said.at) : Infinity
+  const lingering = !held && state === 'live' && age > -3000 && age < LINGER_MS ? said : undefined
+  const shown = held ?? lingering ?? decisions.at(-1)
   useEffect(() => {
     const release = (event: KeyboardEvent) => { if (event.key === 'Escape') setPinned(null) }
     window.addEventListener('keydown', release)
     return () => window.removeEventListener('keydown', release)
   }, [])
 
-  const state = !connected ? 'offline' : !mind.loaded ? 'connecting' : mind.running ? 'live' : mind.events.length ? 'ended' : 'idle'
   const status = { offline: 'Brain offline, retrying', connecting: 'Connecting', live: 'Live', ended: 'Session ended', idle: 'No session running' }[state]
   const from = held ? stream.findIndex(t => t.key === pinned) : 0
   const visible = stream.slice(Math.max(0, from), Math.max(0, from) + 9)
@@ -45,7 +50,7 @@ export function Dashboard() {
 
     <div className="mind-body">
       <div className="mind-left">
-        <Frame decision={shown} held={!!held} state={state} onLive={() => setPinned(null)} />
+        <Frame decision={shown} held={!!held} lingering={!!lingering} state={state} onLive={() => setPinned(null)} />
         <Numbers metrics={mind.metrics} tally={mind.tally} events={mind.events} />
       </div>
       <section className="mind-stream" aria-label="Thought stream">
@@ -93,7 +98,7 @@ function haloOf([x, y, w, h]: [number, number, number, number]): Record<string, 
   }
 }
 
-function Frame({ decision, held, state, onLive }: { decision?: Decision; held: boolean; state: string; onLive: () => void }) {
+function Frame({ decision, held, lingering, state, onLive }: { decision?: Decision; held: boolean; lingering: boolean; state: string; onLive: () => void }) {
   const trace = decision?.trace
   // A frame the brain couldn't capture has no picture of its own; the latest one it holds stands in.
   const { loaded, missing } = useLoaded(trace ? trace.frame_url ?? (held ? null : '/api/frame?at=' + decision.frame_id) : null)
@@ -110,7 +115,7 @@ function Frame({ decision, held, state, onLive }: { decision?: Decision; held: b
     {loaded && <><div className="mind-shade" /><div className="mind-halo" /></>}
     {loaded && missing && <p className="mind-missing">That frame is no longer kept. This is the nearest one still loaded.</p>}
     {decision && loaded && <figcaption>
-      <span>{held ? `Looking back at ${clock(decision.at)}` : state === 'live' ? `Seeing now, ${clock(decision.at)}` : `Last frame, ${clock(decision.at)}`}</span>
+      <span>{held ? `Looking back at ${clock(decision.at)}` : lingering ? `${decision.level === 'speak' ? 'Spoke' : 'Showed a line'} about this, ${clock(decision.at)}` : state === 'live' ? `Seeing now, ${clock(decision.at)}` : `Last frame, ${clock(decision.at)}`}</span>
       {held && <button onClick={onLive}>Back to now</button>}
     </figcaption>}
   </figure>

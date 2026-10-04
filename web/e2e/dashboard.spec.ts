@@ -92,11 +92,17 @@ test('a spoken moment arrives over the socket, and the timeline goes back to it'
   await expect(moment.locator('.mind-decided')).toContainText('Spoke.Line 2 says seven times eight is fifty-four. It is fifty-six.')
   await expect(page.locator('.mind-numbers')).toContainText('Spoke 1 time, showed 0 lines.')
   await expect(page.locator('.mind-timeline .tl-speak')).toHaveCount(1)
+  // the next capture arrives at once, but the frame Iris spoke about stays up for a few seconds
+  await send(decision(0, 'silent', { skipped: 'model_spacing' }, { reason: 'scene changed; next model call in 6s' }))
+  await expect(page.getByText('The scene moved.', { exact: false })).toBeVisible()
+  await expect(page.getByText('Spoke about this')).toBeVisible()
+  await expect(page.locator('.mind-frame')).toHaveAttribute('data-level', 'speak')
   await page.screenshot({ path: 'test-results/dashboard-spoke.png', animations: 'disabled' })
   await page.locator('.mind-moment').last().getByRole('button').click()
   await expect(page.getByText('Looking back at')).toBeVisible()
   await page.getByRole('button', { name: 'Back to now' }).click()
-  await expect(page.getByText('Seeing now')).toBeVisible()
+  await expect(page.getByText('Looking back at')).toHaveCount(0)
+  await expect(page.getByText('Seeing now')).toBeVisible({ timeout: 12000 })
 })
 
 test('dashboard stays calm with no session and with no brain', async ({ page }) => {
