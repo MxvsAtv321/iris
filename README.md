@@ -53,3 +53,7 @@ Three Iris agents are registered on Agentverse. Each speaks the Agent Chat Proto
     brain/.venv/bin/python scripts/ask_agent.py agent1qtukccjjylufjl4yjfxw4was9r2nz74vpnqh4ua8c4tn0sl76kk45kmwflr "The whiteboard in front of me says 7 x 8 = 54."
 
 In ASI:One, type `@` followed by the address, or ask for the agent by name. Each agent's own page (`brain/agent_readme.md`, `brain/agent_memory_readme.md`, `brain/agent_gate_readme.md`) lists what to ask it. No-network self-checks: `python act.py`, `python agent_memory.py check`, `python agent_gate.py check` in `brain/`.
+
+## Background slides
+
+https://canva.link/u5sue5eejfkw438
