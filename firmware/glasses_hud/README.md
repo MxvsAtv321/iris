@@ -49,6 +49,7 @@ Only part of the screen may be visible through the lens. `/test` shows which: th
     curl "http://172.20.10.6/calibrate?x=10&y=-6"     # 10 right, 6 up, as the wearer reads
     curl "http://172.20.10.6/calibrate?w=100&h=44"    # optional: a smaller area, if the dashed box's edges are out of view
     curl "http://172.20.10.6/calibrate?x=0&y=0&w=116&h=52"   # back to the start
+    curl "http://172.20.10.6/calibrate?boost=1"              # 1: panel at 9 V, brighter (the start); 0: the usual 7.5 V
     curl "http://172.20.10.6/calibrate?flip_h=0&flip_v=1"    # which way up: 0 or 1 each; text backwards -> the other flip_h, upside down -> the other flip_v
 
 Text is never drawn off the screen: moving the area towards an edge narrows it, and text drops a size to fit. The eye is a picture 113 pixels wide, so an offset beyond about 7 pixels sideways clips its corner.

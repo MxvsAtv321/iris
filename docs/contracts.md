@@ -18,7 +18,7 @@ Everyone builds against these shapes. The owner may change their contract: updat
 | `GET http://172.20.10.6/status` | JSON: `state`, `eye_open`, `fps`, `draw_ms`, `cmd_to_first_frame_ms`, and where things are drawn: `offset` `{ "x": 0, "y": 0 }`, `area` `{ "w": 116, "h": 52 }` (the space text is fitted into) and `flip` `{ "h": 0, "v": 1 }`. The brain reads `area` at startup and at every session start. |
 | `GET http://172.20.10.6/test` | Draws a test pattern: a border at the screen's edge, a crosshair at its middle, `TL` `TR` `BL` `BR` in the corners (none of these move), and a dashed box around the area text and the eye are drawn in. Look through the lens to see which part of the screen is visible. Returns `ok`. |
 | `GET http://172.20.10.6/calibrate?x=<px>&y=<px>` | Moves all text and the eye: `x` right (up to ±40), `y` down (up to ±20), as the wearer reads. Saved on the board, so it survives restarts and needs no re-flash. Optional `w` (48 to 128) and `h` (24 to 64) resize the area text is fitted into (116x52 unless changed). Optional `flip_h` and `flip_v` (0 or 1) mirror the picture left-right and top-bottom for the optics; changing both turns it 180 degrees. Draws the test pattern and returns `{ "offset": {...}, "area": {...}, "flip": {...} }`; without arguments it changes nothing. |
-| Brightness | The display is at full brightness whenever anything is on it. The eye no longer fades in or out. |
+| Brightness | The display is at full brightness whenever anything is on it. The eye no longer fades in or out. `/calibrate?boost=0` or `1` (saved, 1 unless changed) drives the panel at 9 V instead of 7.5 V for more brightness; `/status` reports `boost`. |
 
 Use the IPs, never the `.local` names (about 5 s slower per request on macOS).
 

@@ -59,6 +59,7 @@ const int16_t MAX_OFF_X = 40, MAX_OFF_Y = 20;
 int16_t offX = 0, offY = 0;          // +x is right, +y is down, as the wearer reads
 int16_t areaW = 116, areaH = 52;
 bool flipH = FLIP_HORIZONTAL, flipV = FLIP_VERTICAL;
+bool boost = true;                   // drive the panel at 9 V instead of 7.5 V (see applyBoost)
 
 // The text sizes, largest first. The same table is in brain/hud_text.py; change both together.
 struct Face {
@@ -122,6 +123,15 @@ void applyFlip() {
   display.ssd1306_command(flipH ? 0xA0 : 0xA1);
   // COM scan direction: 0xC8 is the library default, 0xC0 flips top-bottom.
   display.ssd1306_command(flipV ? 0xC0 : 0xC8);
+}
+
+// Contrast is already as high as it goes; the one thing left is the voltage the panel is driven at. Newer
+// controllers (SSD1306B, SSD1315) can make 9 V instead of the usual 7.5 V, which is visibly brighter; older ones
+// ignore the extra bits. /calibrate?boost=0 turns it off, saved on the board, if the picture misbehaves.
+void applyBoost() {
+  display.ssd1306_command(SSD1306_CHARGEPUMP);
+  display.ssd1306_command(boost ? 0x95 : 0x14);
+  display.ssd1306_command(SSD1306_DISPLAYON);
 }
 
 // The display is always at full brightness: thin lines seen through a half-mirror need all of it. Sent again
@@ -568,7 +578,8 @@ void handleEye() {
 String placementJson() {
   return "\"offset\":{\"x\":" + String(offX) + ",\"y\":" + String(offY) + "}"
          ",\"area\":{\"w\":" + String(fitW()) + ",\"h\":" + String(fitH()) + "}"
-         ",\"flip\":{\"h\":" + String(flipH ? 1 : 0) + ",\"v\":" + String(flipV ? 1 : 0) + "}";
+         ",\"flip\":{\"h\":" + String(flipH ? 1 : 0) + ",\"v\":" + String(flipV ? 1 : 0) + "}"
+         ",\"boost\":" + String(boost ? 1 : 0);
 }
 
 void handleTest() {
@@ -579,7 +590,8 @@ void handleTest() {
 }
 
 // /calibrate?x=..&y=..  moves text and the eye; optional w= and h= resize the content area, and flip_h= and
-// flip_v= (0 or 1) mirror the picture left-right and top-bottom. Saved on the board.
+// flip_v= (0 or 1) mirror the picture left-right and top-bottom, and boost= (0 or 1) is the brighter panel voltage.
+// Saved on the board.
 // Without arguments it changes nothing. Either way it draws the test pattern and answers with where things are.
 void handleCalibrate() {
   bool changed = false;
@@ -589,7 +601,10 @@ void handleCalibrate() {
   if (server.hasArg("h")) { areaH = constrain((int)server.arg("h").toInt(), 24, SCREEN_HEIGHT); changed = true; }
   if (server.hasArg("flip_h")) { flipH = server.arg("flip_h").toInt() != 0; changed = true; }
   if (server.hasArg("flip_v")) { flipV = server.arg("flip_v").toInt() != 0; changed = true; }
+  if (server.hasArg("boost")) { boost = server.arg("boost").toInt() != 0; changed = true; }
   if (changed) {
+    prefs.putBool("bo", boost);
+    applyBoost();
     prefs.putBool("fh", flipH);
     prefs.putBool("fv", flipV);
     applyFlip();              // the left-right flip shows with the next picture, which drawTest sends below
@@ -631,7 +646,9 @@ void setup() {
   prefs.begin("hud", false);
   flipH = prefs.getBool("fh", FLIP_HORIZONTAL);
   flipV = prefs.getBool("fv", FLIP_VERTICAL);
+  boost = prefs.getBool("bo", true);
   applyFlip();
+  applyBoost();
   offX  = constrain((int)prefs.getShort("ox", 0), -MAX_OFF_X, MAX_OFF_X);
   offY  = constrain((int)prefs.getShort("oy", 0), -MAX_OFF_Y, MAX_OFF_Y);
   areaW = constrain((int)prefs.getShort("aw", 116), 48, SCREEN_WIDTH);
