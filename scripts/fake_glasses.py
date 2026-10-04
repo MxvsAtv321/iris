@@ -43,12 +43,33 @@ def card():
     return buf.getvalue()
 
 
+SIZES = {6: (320, 240), 10: (640, 480), 11: (800, 600)}
+
+
+def sized(jpeg):
+    """The frame at the size the camera is set to, like the real board."""
+    want = SIZES.get(state["settings"].get("framesize"), (800, 600))
+    img = Image.open(io.BytesIO(jpeg))
+    if img.size == want:
+        return jpeg
+    buf = io.BytesIO()
+    img.resize(want).save(buf, "JPEG", quality=85)
+    return buf.getvalue()
+
+
 @app.get("/capture")
 async def capture():
     async with camera:
         await asyncio.sleep(CAPTURE_S)
         state["frames"] += 1
-        return Response(state["jpeg"], media_type="image/jpeg")
+        return Response(sized(state["jpeg"]), media_type="image/jpeg")
+
+
+@app.get("/restart")
+async def restart():
+    """What a power cycle does to the real board: back to its small, upside-down defaults."""
+    state["settings"].update(framesize=6, vflip=1, hmirror=0)
+    return PlainTextResponse("ok")
 
 
 def numbered(n):

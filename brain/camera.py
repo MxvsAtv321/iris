@@ -21,8 +21,11 @@ import time
 from collections import deque
 from urllib.parse import urlsplit
 
+from dotenv import load_dotenv
+from pathlib import Path
 from PIL import Image
 
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")   # settings below come from .env, whoever imports this first
 log = logging.getLogger("iris.camera")
 CAMERA = (os.getenv("CAMERA_URL") or "http://172.20.10.4").rstrip("/")
 _host = urlsplit(CAMERA)
@@ -234,6 +237,8 @@ if __name__ == "__main__":
                 await asyncio.sleep(3600)
 
     async def check():
+        global ROTATE
+        ROTATE = 0                                                        # the frames are compared as sent, whatever .env says
         cam = Stream([("down",), ("refuse",), ("frames", [a, b, a]), ("frames", [b])])
         task = asyncio.create_task(read_stream(cam))
         seen = []

@@ -74,6 +74,8 @@ Every frame the brain hands out, here and everywhere else, has been turned uprig
 
 ### `GET /api/frame`, `GET /api/frame/{frame_id}`
 
+Every frame the brain hands out, here and to the model, memory and the dashboard, has been turned upright by `CAMERA_ROTATE` (0, 90, 180 or 270 degrees clockwise, in `.env`), for a camera mounted on its side.
+
 `GET /api/frame` is the newest camera frame the brain holds, as `image/jpeg`, from the watch loop or a question. `204` before the first frame. Never cached.
 
 `GET /api/frame/{frame_id}` is the frame behind one decision. Use the decision's `trace.frame_url` rather than building the path: it carries a `?v=` token that changes when the brain restarts, because frame ids start again from `f_0001`. The brain keeps the newest 450 frames (about 15 minutes); older ones return `404`.
@@ -200,7 +202,7 @@ Every `decision` carries `trace`: how Iris got to that verdict. All keys are alw
 - `frame_url` is the frame this decision is about, relative to the brain; `null` when the camera didn't answer.
 - `looked` is true when the vision model judged this frame. Most frames are not looked at, and `skipped` says why: `no_change` (the scene is the same as the last one judged), `model_spacing` (it changed, but the last model call was under 6 s ago), `question_in_progress`, or `error` (`reason` has the error). `skipped` is `null` when `looked` is true.
 - `change` is how different the frame is from the last one judged, against the threshold that triggers a look; `null` on the first frame of a session.
-- `saw` is the model's description, `why` its reason for the urgency, `model` the model that answered (the backup's name if the watch model failed). `candidate` is the line the model had ready, kept here even when Iris stayed silent, so the dashboard can show what was held back. The top-level `text` and `speak` stay empty unless the line was actually shown or spoken.
+- `saw` is the model's description, `why` its reason for the urgency, `model` the model that answered: the watch model, or `WATCH_LATE_MODEL` when the watch model was slow to start and the second model answered first, or the backup if the watch model failed. `candidate` is the line the model had ready, kept here even when Iris stayed silent, so the dashboard can show what was held back. The top-level `text` and `speak` stay empty unless the line was actually shown or spoken.
 - `urgency` is 0 to 10, or `null` when the frame wasn't looked at or the reply couldn't be read. `proposed` is the level that urgency asks for on its own: `speak` at `speak_at`, `display` at `display_at`, otherwise `silent`.
 - `rules` are the gate's four rules in the order it checks them. `outcome` is `passed`, `blocked`, `softened` (only `rate_limit`: spoken too recently, so the line is shown instead) or `not_checked` (urgency was under `display_at`, so there was nothing to hold back). Every rule is worked out even after one blocks; `blocked_by` names the first that blocked, which is the one that decided, or is `null`. `repeat` also carries its `similarity` and `threshold`. `quiet_after_answer` covers the 10 s after a question is asked or answered, or the wake word is heard. `detail` is a plain phrase to show as it is. `rules` is empty when the frame wasn't looked at.
 - `verdict` is the same as the decision's `level`.

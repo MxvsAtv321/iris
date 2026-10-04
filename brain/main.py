@@ -44,6 +44,11 @@ WAKE_READY_S = float(os.getenv("WAKE_READY_S") or 8)       # after the wake word
 EARLY_SPEECH = (os.getenv("EARLY_SPEECH") or "1") != "0"   # start the voice on the first sentence, before the answer ends
 KEEP_WARM_S = float(os.getenv("KEEP_WARM_S") or 25)        # ping every provider this often so no question pays a handshake
 WATCH_TIMEOUT_S = 12           # per model; the loop can wait, a reasoning watch model may need it
+# A second model for looks the watch model is late on. gpt-6-luna answers a look in about 2 s, but for roughly 20 s
+# of every minute it holds requests with a new picture for 6 to 12 s (measured: no other model does, and the network
+# is fine). If it hasn't started writing after WATCH_LATE_S, this model is asked too and whichever starts first is used.
+WATCH_LATE_MODEL = (os.getenv("WATCH_LATE_MODEL") or "").strip()
+WATCH_LATE_S = float(os.getenv("WATCH_LATE_S") or 2.5)
 FALLBACK = "Didn't catch that, try again"
 NO_PHOTO = "\n(The camera didn't respond, so there is no photo. If the question needs one, say you can't see right now.)"
 HERE = Path(__file__).resolve().parent
@@ -143,6 +148,21 @@ async def emit(kind, sid, **fields):
 
 
 camera_lock = asyncio.Lock()   # the ESP32 serves one request at a time
+# What each framesize setting produces. A frame of any other size means the camera restarted and lost its settings.
+FRAME_SIZES = {"6": (320, 240), "10": (640, 480), "11": (800, 600), "12": (1024, 768)}
+healed = {"at": -1e9}
+
+
+def lost_settings(jpeg):
+    """True when the camera is not sending the size it was told to: it has restarted into its defaults,
+    which are also upside down for this mount. A frame turned on its side counts as the same size."""
+    want = FRAME_SIZES.get(CAMERA_SETTINGS.get("framesize") or "")
+    if not want:
+        return False
+    try:
+        return sorted(Image.open(io.BytesIO(jpeg)).size) != sorted(want)
+    except Exception:  # noqa: BLE001 - an unreadable frame says nothing about the settings
+        return False
 
 
 async def capture(reuse_s=0.0):
@@ -341,6 +361,10 @@ async def tick(sid, fid, trace):
 
     jpeg = await capture()
     lat["capture"] = ms(t0)
+    if lost_settings(jpeg) and time.monotonic() - healed["at"] > 15:      # whether the frame came from the stream or /capture
+        healed["at"] = time.monotonic()
+        log.warning("the camera restarted (its frames are the wrong size); sending its settings again")
+        bg(setup_camera())
     frames[fid] = jpeg
     while len(frames) > FRAMES_KEPT:
         frames.popitem(last=False)
@@ -362,7 +386,7 @@ async def tick(sid, fid, trace):
     trace["looked"] = True
     t_model = time.monotonic()
     text, model = await llm.chat(llm.messages(prompts.WATCH, prompts.build_watch(s), jpeg),
-                                 model=llm.WATCH, timeout=WATCH_TIMEOUT_S)
+                                 model=llm.WATCH, timeout=WATCH_TIMEOUT_S, late=(WATCH_LATE_MODEL, WATCH_LATE_S))
     lat["model"] = ms(t_model)
     trace["model"] = model
     w = llm.parse_json(text)
