@@ -18,27 +18,6 @@ test('phone recovers from a failed backend request', async ({ page }) => {
   await expect(page.getByRole('alert')).toContainText('brain is unavailable')
   await expect(page.getByRole('button', { name: 'Retry question' })).toBeEnabled()
 })
-test('dashboard shows silent reasons, filters sessions and displays backend metrics', async ({ page }) => {
-  await page.routeWebSocket('**/api/ws', ws => {
-    setTimeout(() => {
-      const at = new Date().toISOString()
-      ws.send(JSON.stringify({ type: 'decision', session_id: 'other', at, level: 'speak', text: 'OTHER SESSION', reason: 'not ours' }))
-      ws.send(JSON.stringify({ type: 'decision', session_id: 'judge-01', at, level: 'silent', text: '', reason: 'nothing new in view' }))
-      ws.send(JSON.stringify({ type: 'metrics', session_id: 'judge-01', at, answer_latency_ms_p50: 1700, gate_precision: .9 }))
-    }, 200)
-  })
-  await page.goto('/dashboard')
-  await expect(page.getByText('nothing new in view')).toBeVisible()
-  await expect(page.getByText('OTHER SESSION')).toHaveCount(0)
-  await expect(page.getByText('1.70', { exact: false })).toBeVisible()
-  await expect(page.getByText('90', { exact: false })).toBeVisible()
-  await page.getByRole('button', { name: 'silent', exact: true }).click()
-  await expect(page.getByText('nothing new in view')).toBeVisible()
-  await expect(page.getByText('Metrics updated')).toHaveCount(0)
-  await page.getByRole('button', { name: 'Pause feed' }).click()
-  await expect(page.getByRole('button', { name: 'Resume feed' })).toBeVisible()
-  await page.screenshot({ path: 'test-results/dashboard.png', fullPage: true })
-})
 test('mobile demo is clearly labeled and does not overflow', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/phone')

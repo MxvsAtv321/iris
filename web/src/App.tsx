@@ -3,6 +3,7 @@ import { SafeBoundary } from './garden/SafeBoundary'
 const Garden = lazy(() => import('./garden/Garden').then(module => ({ default: module.Garden })))
 import { ask, startSession, stripWakeWord, type Answer } from './api'
 import { useFeed } from './useFeed'
+import { Dashboard } from './dashboard/Dashboard'
 import { speechRecognition, type Recognition } from './voice'
 import IrisVisual from './IrisVisual'
 import { EventSpeech } from './eventSpeech'
@@ -16,19 +17,20 @@ function initialSession() {
 export default function App() {
   const [session, setSession] = useState(initialSession)
   const [sessionOnline, setSessionOnline] = useState(false)
+  const dashboard = location.pathname === '/dashboard'
+  const garden = location.pathname === '/garden'
   useEffect(() => {
+    if (dashboard) return   // the dashboard only watches: opening or reloading it must not start or restart a session
     const controller = new AbortController()
     setSessionOnline(false)
     void startSession(session, controller.signal).then(ok => {
       if (!controller.signal.aborted) setSessionOnline(ok)
     })
     return () => controller.abort()
-  }, [session])
+  }, [session, dashboard])
   const [draft, setDraft] = useState(session)
   const [demo, setDemo] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const dashboard = location.pathname === '/dashboard'
-  const garden = location.pathname === '/garden'
   function changeSession() {
     const next = draft.trim()
     if (!next) return
@@ -38,16 +40,16 @@ export default function App() {
   const sessionControls = <div className="session-bar"><form onSubmit={e => { e.preventDefault(); changeSession() }}><label htmlFor="session">SESSION</label><input id="session" value={draft} maxLength={80} onChange={e => setDraft(e.target.value)} /><button disabled={!draft.trim() || draft.trim() === session}>Apply</button></form>
       <label className="demo-toggle"><input type="checkbox" checked={demo} onChange={e => setDemo(e.target.checked)} /> Demo mode</label>
     </div>
+  if (dashboard) return <Dashboard />
   return <div className={`app-shell ${!dashboard && !garden ? "phone-shell" : ""} ${garden ? "garden-route" : ""}`}>
     <header className="topbar"><a className="brand" href="/phone"><span className="identity-slot"><img src="/figma/identity.svg" alt="" /></span><span className="brand-copy"><strong>IRIS</strong><small>Your glasses, connected</small></span></a>
       <nav aria-label="Main navigation"><a className={!dashboard && !garden ? 'active' : ''} href="/phone">Companion</a><a className={dashboard ? 'active' : ''} href="/dashboard">Dashboard</a><a className={garden ? 'active' : ''} href={`/garden?session=${encodeURIComponent(session)}`}>Garden</a></nav>
       
     </header>
-    {(dashboard) && sessionControls}
-    {demo && (dashboard || garden) && <div className="demo-banner">DEMO MODE · Scripted examples, no camera or brain connection. Answers are not observations.</div>}
+    {demo && garden && <div className="demo-banner">DEMO MODE · Scripted examples, no camera or brain connection. Answers are not observations.</div>}
     {garden && <nav className="garden-navigation" aria-label="Garden navigation"><a href="/phone">← Companion</a><span>MEMORY GARDEN</span><a href="/dashboard">Dashboard →</a></nav>}
     {garden ? <SafeBoundary fallback={<main className="empty-page"><h1>The garden could not load.</h1><p>Try reloading, or return to the companion.</p><a href="/phone">Back to companion →</a></main>}><Suspense fallback={<main className="empty-page" role="status">Opening your memory garden…</main>}><Garden /></Suspense></SafeBoundary> :
-      dashboard ? <Dashboard key={session + demo} session={session} demo={demo} sessionOnline={sessionOnline} /> : <Phone key={session + demo} session={session} demo={demo} sessionOnline={sessionOnline} menu={sessionControls} settingsOpen={settingsOpen} onSettings={() => setSettingsOpen(!settingsOpen)} />}
+      <Phone key={session + demo} session={session} demo={demo} sessionOnline={sessionOnline} menu={sessionControls} settingsOpen={settingsOpen} onSettings={() => setSettingsOpen(!settingsOpen)} />}
     <footer><span>Iris</span><span>MHacks 2026</span></footer>
   </div>
 }
@@ -213,37 +215,6 @@ function Phone({ session, demo, sessionOnline, menu, settingsOpen, onSettings }:
       <section className="figma-extra"><label className="wake-option"><input type="checkbox" checked={wakeWord} disabled={busy} onChange={e => setWakeWord(e.target.checked)} /> Start with “Iris” after tapping</label><p>{wake}</p><p>Voice uses browser speech services. Listening ends after each question.</p><p>{status} · {session}</p></section>
     </OptionsDialog>
     {demo && <p className="figma-demo-note">DEMO MODE · Scripted examples, no camera or brain connection. Answers are not observations.</p>}
-  </main>
-}
-
-function Dashboard({ session, demo, sessionOnline }: { session: string; demo: boolean; sessionOnline: boolean }) {
-  const { events, status: feedStatus } = useFeed(session, demo)
-  const status = demo ? feedStatus : !sessionOnline ? 'Offline · session unavailable' : feedStatus
-  const [filter, setFilter] = useState('all')
-  const [paused, setPaused] = useState(false)
-  const [snapshot, setSnapshot] = useState(events)
-  const shown = paused ? snapshot : events
-  const metrics = events.find(e => e.type === 'metrics')
-  const latestAnswer = events.find(e => e.type === 'answer')
-  const decisions = shown.filter(e => e.type === 'decision')
-  const visible = shown.filter(e => filter === 'all' || e.type === 'decision' && e.level === filter)
-  const latency = metrics?.answer_latency_ms_p50 ?? latestAnswer?.latency_ms
-  const precision = metrics?.gate_precision
-  return <main className="dashboard">
-    <div className="dashboard-heading"><div><p className="eyebrow">Activity</p><h1>Dashboard</h1><p>Live decisions, response times, and session activity.</p></div><span className={'connection ' + (status === 'Connected' || demo ? 'online' : '')}><i />{status}</span></div>
-    <div className="metrics-grid">
-      <section className="panel metric"><p>Response time</p><strong>{latency !== undefined ? (latency / 1000).toFixed(2) : '—'}<small>{latency !== undefined ? ' s' : ''}</small></strong><span>{metrics ? 'Median latency · from the brain' : latestAnswer ? 'Latest answer · from the brain' : 'Awaiting an answer from the brain'}</span></section>
-      <section className="panel metric"><p>Gate precision</p><strong>{precision != null ? Math.round(precision * 100) : '—'}<small>{precision != null ? '%' : ''}</small></strong><span>{precision == null ? 'not measured yet' : metrics?.gate_precision_basis || 'Measurement basis unavailable'}</span></section>
-      <section className="panel metric"><p>Silent decisions</p><strong>{decisions.filter(e => e.level === 'silent').length}<small> / {decisions.length}</small></strong><span>Silent decisions · in this feed’s latest 200 events</span></section>
-    </div>
-    <section className="panel feed-panel"><div className="feed-heading"><div><h2>Decision stream</h2><p>{demo ? 'Scripted examples' : 'Live from the brain'} · {session}</p></div><button className="secondary" onClick={() => { if (!paused) setSnapshot(events); setPaused(!paused) }}>{paused ? 'Resume feed' : 'Pause feed'}</button></div>
-      <div className="filters" aria-label="Filter decisions">{['all', 'silent', 'display', 'speak'].map(f => <button key={f} aria-pressed={filter === f} className={filter === f ? 'selected' : ''} onClick={() => setFilter(f)}>{f === 'all' ? 'All events' : f}</button>)}{paused && <span>VIEW PAUSED · still receiving</span>}</div>
-      <div className="feed-table"><div className="feed-row table-labels"><span>TIME</span><span>DECISION</span><span>DETAILS</span></div>
-        {!visible.length && <div className="feed-empty"><h3>{filter === 'all' ? 'No activity yet' : 'No matching decisions yet.'}</h3><p>{demo ? 'Sample decisions appear every few seconds.' : 'Start the brain with the same session ID, or enable demo mode to explore.'}</p></div>}
-        {visible.map((event, i) => <div className="feed-row" key={event.at + i}><time dateTime={event.at}>{new Date(event.at).toLocaleTimeString([], { hour12: false })}</time><span className={'badge ' + (event.level || event.type)}>{event.level || event.type.replace('_', ' ')}</span><div><p>{event.type === 'decision' ? event.text || 'Chose to stay quiet' : event.type === 'answer' ? event.display : event.type === 'answer_delta' ? event.text : event.type === 'memory_saved' ? event.description : 'Metrics updated'}</p><span>{event.reason || event.question || (event.type === 'metrics' ? 'Aggregate metrics received from the brain.' : event.type === 'answer_delta' ? 'Answer streaming · ' + event.ask_id : 'A moment added to memory.')}</span></div></div>)}
-      </div>
-    </section>
-    <p className="dashboard-note">Precision is reported by the backend from test photos; it is never inferred from how often Iris speaks. Feed data is held in this tab, up to 200 events.</p>
   </main>
 }
 

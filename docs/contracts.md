@@ -49,6 +49,26 @@ The live data a question would get, for testing and the dashboard: `{ "topics": 
 
 What the glasses have just seen, for the Act agent: `{ "session_id": "judge-01" | null, "recently_seen": ["19:02 a protein bar on a wooden table"], "already_said": [] }`. `session_id` is null when no session is running.
 
+### `GET /api/frame`, `GET /api/frame/{frame_id}`
+
+`GET /api/frame` is the newest camera frame the brain holds, as `image/jpeg`, from the watch loop or a question. `204` before the first frame. Never cached.
+
+`GET /api/frame/{frame_id}` is the frame behind one decision. Use the decision's `trace.frame_url` rather than building the path: it carries a `?v=` token that changes when the brain restarts, because frame ids start again from `f_0001`. The brain keeps the newest 450 frames (about 15 minutes); older ones return `404`.
+
+### `GET /api/trace`
+
+What the dashboard loads when it opens, so it can join a session partway through. Read-only: it never starts, restarts or touches a session.
+
+```json
+{ "session_id": "judge-01",
+  "events": [ { "type": "decision", "...": "..." }, { "type": "answer", "...": "..." } ],
+  "metrics": { "answer_latency_ms_p50": 1700, "gate_accuracy": 0.9, "moments_seen": 412, "...": "..." } }
+```
+
+- `session_id` is the running session, or `null` when none is.
+- `events` are that session's `decision` and `answer` events, oldest first, in the same shape as on the WebSocket, up to the newest 1800 (an hour of frames). After a session stops they stay until another session's first event. They are held in memory, so a brain restart empties them.
+- `metrics` has the same fields as the `metrics` event.
+
 ### `POST /api/show`
 
 Request: `{ "text": "Stay in" }`. Puts the text on the glasses display (cut to 40 characters) and returns `{ "text": "Stay in", "shown": true }`. `shown` is false when the text is empty or the display doesn't answer.
@@ -69,7 +89,8 @@ One JSON message per event. Every message has `type`, `session_id` and `at` (ISO
 { "type": "decision", "session_id": "judge-01", "at": "2026-10-03T19:02:11Z",
   "level": "speak", "text": "Line 2: 7x8 is 56", "speak": "Line 2 says seven times eight is fifty-four, it's fifty-six.",
   "reason": "urgency 9: arithmetic error on whiteboard", "frame_id": "f_0192",
-  "focus_box": [0.12, 0.31, 0.55, 0.09] }
+  "focus_box": [0.12, 0.31, 0.55, 0.09],
+  "trace": { "...": "see Decision trace below" } }
 
 { "type": "answer_delta", "session_id": "judge-01", "at": "...", "ask_id": "a_0007", "text": "12g prot" }
 
@@ -83,7 +104,8 @@ One JSON message per event. Every message has `type`, `session_id` and `at` (ISO
 
 { "type": "metrics", "session_id": "judge-01", "at": "...",
   "answer_latency_ms_p50": 1700, "answer_latency_ms_p95": 2400, "first_word_ms_p50": 650,
-  "gate_precision": 0.9, "gate_precision_basis": "measured on 10 test photos",
+  "gate_precision": 0.9, "gate_accuracy": 0.9, "gate_precision_basis": "measured on 10 test photos",
+  "moments_seen": 412, "moments_silent": 404, "moments_shown": 5, "moments_spoken": 3,
   "model_calls_today": 112, "model_usd_today": 0.41,
   "ask_model": "xai:grok-4.20-non-reasoning", "watch_model": "xai:grok-4.20-reasoning" }
 ```
@@ -95,7 +117,47 @@ One JSON message per event. Every message has `type`, `session_id` and `at` (ISO
 - `answer.context` lists the live data sources the answer used, e.g. `["Open-Meteo", "Launch Library 2 (SpaceX)"]`; empty for ordinary questions.
 - `model_usd_today` is model spend reported by the providers (Grok credits included); `ask_model` / `watch_model` are `provider:model[@effort]`.
 - `gate_precision` comes from the bake-off, not live use. Show it with `gate_precision_basis`, e.g. "Gate precision 0.9, measured on test photos". It is `null` until the bake-off has run.
+- `gate_accuracy` is the share of test photos where the gate chose the expected level (the bake-off's `level_agreement` for the watch model). Same basis and same `null` rule as `gate_precision`.
+- `moments_seen` counts every decision in the running session, and `moments_silent` + `moments_shown` + `moments_spoken` add up to it.
 - **Phone audio:** play speech only from WebSocket events. A `decision` with `level: "speak"` means fetch `/api/tts?text=<speak>`; an `answer` with non-empty `speak` means the same. Never play from the `/api/ask` HTTP response, or it plays twice. Unlock audio with a tap at session start, because mobile browsers block autoplay.
+
+### Decision trace
+
+Every `decision` carries `trace`: how Iris got to that verdict. All keys are always present.
+
+```json
+"trace": {
+  "frame_url": "/api/frame/f_0192?v=68e06b2f",
+  "looked": true,
+  "skipped": null,
+  "change": { "score": 31.4, "threshold": 12 },
+  "saw": "A whiteboard of times tables. Line 2 reads 7 x 8 = 54.",
+  "why": "arithmetic error on whiteboard",
+  "topic": "whiteboard-math",
+  "model": "xai:grok-4.20-reasoning",
+  "candidate": { "text": "Line 2: 7x8 is 56", "say": "Line 2 says seven times eight is fifty-four, it's fifty-six." },
+  "urgency": 9, "display_at": 5, "speak_at": 8,
+  "proposed": "speak",
+  "rules": [
+    { "rule": "cooldown", "outcome": "blocked", "detail": "nudged about 'whiteboard-math' 20 s ago; one per 120 s" },
+    { "rule": "repeat", "outcome": "blocked", "similarity": 0.86, "threshold": 0.6, "detail": "already said 'Line 2 says ...'" },
+    { "rule": "quiet_after_answer", "outcome": "passed", "detail": "no answer in the last 10 s" },
+    { "rule": "rate_limit", "outcome": "passed", "detail": "nothing spoken in the last 15 s" }
+  ],
+  "blocked_by": "cooldown",
+  "verdict": "silent",
+  "latency_ms": { "capture": 164, "model": 2380, "gate": 0.05, "total": 2551 }
+}
+```
+
+- `frame_url` is the frame this decision is about, relative to the brain; `null` when the camera didn't answer.
+- `looked` is true when the vision model judged this frame. Most frames are not looked at, and `skipped` says why: `no_change` (the scene is the same as the last one judged), `model_spacing` (it changed, but the last model call was under 6 s ago), `question_in_progress`, or `error` (`reason` has the error). `skipped` is `null` when `looked` is true.
+- `change` is how different the frame is from the last one judged, against the threshold that triggers a look; `null` on the first frame of a session.
+- `saw` is the model's description, `why` its reason for the urgency, `model` the model that answered (the backup's name if the watch model failed). `candidate` is the line the model had ready, kept here even when Iris stayed silent, so the dashboard can show what was held back. The top-level `text` and `speak` stay empty unless the line was actually shown or spoken.
+- `urgency` is 0 to 10, or `null` when the frame wasn't looked at or the reply couldn't be read. `proposed` is the level that urgency asks for on its own: `speak` at `speak_at`, `display` at `display_at`, otherwise `silent`.
+- `rules` are the gate's four rules in the order it checks them. `outcome` is `passed`, `blocked`, `softened` (only `rate_limit`: spoken too recently, so the line is shown instead) or `not_checked` (urgency was under `display_at`, so there was nothing to hold back). Every rule is worked out even after one blocks; `blocked_by` names the first that blocked, which is the one that decided, or is `null`. `repeat` also carries its `similarity` and `threshold`. `detail` is a plain phrase to show as it is. `rules` is empty when the frame wasn't looked at.
+- `verdict` is the same as the decision's `level`.
+- `latency_ms`: `capture` is the camera request, `model` the vision call, `gate` the rules, `total` the whole tick. `model` and `gate` are missing when the frame wasn't looked at.
 
 ## Memory (Darren)
 
@@ -211,6 +273,7 @@ The Python client gives up after 4 s for search and 8 s for ingest, and the gard
 ## Web app (owner: Ali, `/garden` owned by Darren)
 
 - Routes: `/phone`, `/dashboard`, `/garden`.
+- `/dashboard` only watches. It reads `GET /api/trace`, the WebSocket and the frame routes, and never calls `POST` or `DELETE /api/session`: opening or reloading it changes nothing. It shows whichever session the brain is running. Sessions are started from `/phone`.
 - Vite proxies `/api` (including the WebSocket) to the FastAPI server.
 - One Cloudflare tunnel serves the app over https; add its host to `server.allowedHosts` in the Vite config.
 

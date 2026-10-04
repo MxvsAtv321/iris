@@ -47,8 +47,8 @@ On site, on the hotspot:
 
 | File | What |
 | --- | --- |
-| `main.py` | Loop, routes, WebSocket events, sessions (`state.json`) |
-| `gate.py` | Silent / display / speak rules, repeat check, focus box |
+| `main.py` | Loop, routes, WebSocket events, sessions (`state.json`), the decision trace, frames and `/api/trace` for the dashboard |
+| `gate.py` | Silent / display / speak rules, repeat check, focus box; `Gate.explain` reports each rule's outcome |
 | `prompts.py` | Watch prompt, question modes (ask, identify, read, recall, live) |
 | `llm.py` | Providers, hedged streaming, frame downscaling, call and spend counters |
 | `live.py` | Weather, tonight's sky, SpaceX launches, ISS: cached, prefetched, for the `live` mode |
