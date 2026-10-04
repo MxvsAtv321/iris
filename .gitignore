@@ -32,3 +32,6 @@ agent1*/
 
 # logs and pid files of the Agentverse agents (scripts/agents.sh)
 brain/.agents/
+
+# logs and pid files of the demo (scripts/run_demo.sh)
+brain/.run/

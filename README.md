@@ -4,6 +4,17 @@ A clip-on that turns any pair of glasses into glasses that think ahead. Built at
 
 Start with `CLAUDE.md` for the overview and `docs/contracts.md` for how the parts connect.
 
+## Run the demo
+
+On the integration laptop, joined to the glasses' hotspot, with `.env` filled in and `cloudflared` installed:
+
+    scripts/run_demo.sh start     # brain, Cloudflare tunnel, web app; prints the https link for the phone
+    scripts/run_demo.sh status
+    scripts/run_demo.sh link
+    scripts/run_demo.sh stop
+
+The phone needs https for its microphone, which is what the tunnel is for. It is a Cloudflare quick tunnel: public, no account, and its address changes every time the tunnel starts, so `start` writes it to `TUNNEL_HOST` in `.env` and rebuilds the web app. Stop it after the demo.
+
 ## Fetch.ai agents
 
 Three Iris agents are registered on Agentverse. Each speaks the Agent Chat Protocol, so ASI:One can find it and talk to it.
