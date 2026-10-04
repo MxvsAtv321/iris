@@ -67,6 +67,8 @@ What the glasses have just seen, for the Act agent: `{ "session_id": "judge-01" 
 
 ### `GET /api/frame`, `GET /api/frame/{frame_id}`
 
+Every frame the brain hands out, here and to the model, memory and the dashboard, has been turned upright by `CAMERA_ROTATE` (0, 90, 180 or 270 degrees clockwise, in `.env`), for a camera mounted on its side.
+
 `GET /api/frame` is the newest camera frame the brain holds, as `image/jpeg`, from the watch loop or a question. `204` before the first frame. Never cached.
 
 `GET /api/frame/{frame_id}` is the frame behind one decision. Use the decision's `trace.frame_url` rather than building the path: it carries a `?v=` token that changes when the brain restarts, because frame ids start again from `f_0001`. The brain keeps the newest 450 frames (about 15 minutes); older ones return `404`.
