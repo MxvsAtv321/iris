@@ -1,5 +1,5 @@
-/* Memory garden. Night garden palette, one bookish serif, quiet chrome so the
-   glowing buds are the only bright thing on screen.
+/* Memory garden. Night forest palette, one bookish serif, quiet chrome so the
+   glowing tree is the only bright thing on screen.
 
    Every rule is scoped under .garden so this file can't restyle the rest of
    the app. The tokens below are the single source for the garden's look in
@@ -25,15 +25,11 @@
 }
 
 .garden {
-  --dusk: #241f3d;
-  --dusk-deep: #14122a;
-  --ground: #3b5e4a;
-  --sky-light: #a9a3e0;
-  --stone: #9aa6ad;
-  --stem: #3f6b52;
-  --mist: #d8dfe9;
-  --glow: #a8f0d6;
-  --pollen: #f4cf72;
+  --dusk: #0a0918;
+  --dusk-deep: #07060f;
+  --mist: #dcd6f0;
+  --glow: #b9a4ff;
+  --pollen: #f4c56e;
 
   --font: "Literata", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
   --step--1: 0.875rem;
@@ -74,11 +70,37 @@
   display: flex; gap: 8px;
 }
 
-.garden .notice {
-  position: absolute; top: 64px; left: 20px; max-width: 34ch; margin: 0;
-  font-size: var(--step--1); opacity: 0.85;
+.garden .legend {
+  position: absolute; top: 60px; left: 20px; margin: 0; padding: 0; list-style: none;
+  display: flex; gap: 14px; font-size: 0.75rem; opacity: 0.7; pointer-events: none;
 }
-.garden .notice-error { color: var(--pollen); opacity: 1; }
+.garden .legend li { display: flex; align-items: center; gap: 6px; }
+.garden .legend i { width: 7px; height: 7px; border-radius: 50%; background: var(--glow); }
+.garden .legend .faint i { opacity: 0.35; }
+.garden .legend .bright i { box-shadow: 0 0 8px 1px var(--glow); }
+.garden .legend .gold i { background: var(--pollen); box-shadow: 0 0 8px 1px var(--pollen); }
+
+.garden .demo-tag {
+  position: absolute; top: 88px; left: 20px; margin: 0;
+  font-size: 0.75rem; letter-spacing: 0.04em; color: var(--pollen); opacity: 0.9; pointer-events: none;
+}
+
+/* What Iris saw and decided, beside the leaf the pointer is on. */
+.garden .overlay > .leaf-card {
+  position: absolute; width: max-content; max-width: min(300px, calc(100vw - 32px));
+  transform: translate(14px, -50%); padding: 10px 12px; border-radius: 10px; pointer-events: none;
+  background: color-mix(in srgb, var(--dusk-deep) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--glow) 30%, transparent);
+  backdrop-filter: blur(8px); font-size: var(--step--1); line-height: 1.45;
+}
+.garden .leaf-card.flip { transform: translate(calc(-100% - 14px), -50%); }
+.garden .leaf-card.blossom { border-color: color-mix(in srgb, var(--pollen) 45%, transparent); }
+.garden .leaf-card p { margin: 0; }
+.garden .leaf-card .did { font-weight: 600; color: var(--glow); }
+.garden .leaf-card.blossom .did { color: var(--pollen); }
+.garden .leaf-card .did span { font-weight: 400; opacity: 0.6; color: var(--mist); }
+.garden .leaf-card .line { margin-top: 4px; }
+.garden .leaf-card .why { margin-top: 4px; opacity: 0.7; }
 
 .garden .moment-card {
   position: absolute; left: 20px; bottom: 96px; width: min(380px, calc(100vw - 40px));
@@ -125,7 +147,8 @@
 .garden button:focus-visible,
 .garden input:focus-visible { outline: 2px solid var(--glow); outline-offset: 2px; }
 
-.garden .exit-cardboard { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); opacity: 0.6; }
+/* At the bottom, clear of the app's navigation bar across the top. */
+.garden .exit-cardboard { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); opacity: 0.6; }
 
 .garden.garden-empty { overflow: auto; }
 .garden .garden-empty-body { max-width: 46ch; margin: 18vh auto 0; padding: 0 24px; }

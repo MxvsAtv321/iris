@@ -5,37 +5,25 @@
 // parse oklch() or color-mix().
 
 export type Theme = {
-  dusk: string; // sky, fog, page background
+  dusk: string; // night sky, page background
   duskDeep: string; // behind an open moment, panels
-  ground: string; // garden floor
-  skyLight: string; // light falling from above
-  stone: string; // path stones
-  stem: string; // bud stems
   mist: string; // body text
-  glow: string; // resting buds, focus rings
-  pollen: string; // a found moment, primary buttons
+  glow: string; // leaf violet: the wordmark, focus rings
+  pollen: string; // blossom gold: a found moment, primary buttons
 };
 
 // Only used if garden.css somehow didn't load.
 const FALLBACK: Theme = {
-  dusk: "#241f3d",
-  duskDeep: "#14122a",
-  ground: "#3b5e4a",
-  skyLight: "#a9a3e0",
-  stone: "#9aa6ad",
-  stem: "#3f6b52",
-  mist: "#d8dfe9",
-  glow: "#a8f0d6",
-  pollen: "#f4cf72",
+  dusk: "#0a0918",
+  duskDeep: "#07060f",
+  mist: "#dcd6f0",
+  glow: "#b9a4ff",
+  pollen: "#f4c56e",
 };
 
 const CSS_NAMES: Record<keyof Theme, string> = {
   dusk: "--dusk",
   duskDeep: "--dusk-deep",
-  ground: "--ground",
-  skyLight: "--sky-light",
-  stone: "--stone",
-  stem: "--stem",
   mist: "--mist",
   glow: "--glow",
   pollen: "--pollen",
