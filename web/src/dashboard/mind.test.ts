@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { IrisEvent } from '../api'
-import { EMPTY, lullLine, parseSnapshot, reduce, thoughts, verdict, type Decision, type Lull, type Trace } from './mind'
+import { askLine, EMPTY, lullLine, parseSnapshot, reduce, thoughts, verdict, type AnswerEvent, type Decision, type Lull, type Trace } from './mind'
 
 const at = (s: number) => new Date(Date.UTC(2026, 9, 4, 0, 0, s)).toISOString()
 function decision(n: number, level: 'silent' | 'display' | 'speak', trace: Partial<Trace> = {}, session = 'judge-01') {
@@ -58,5 +58,30 @@ describe('the thought stream', () => {
   it('says an ordinary moment was simply under the bar', () => {
     const v = verdict(load([decision(1, 'silent', { ...looked, display_at: 5 })]).events[0] as Decision)
     expect(v.because).toBe('Urgency 2 is under 5, where it would show a line.')
+  })
+})
+
+describe('a question’s wait, step by step', () => {
+  const answer = (trace?: unknown) => ({ type: 'answer', session_id: 'judge-01', at: at(40), ask_id: 'a_0001', question: 'what is this?',
+    display: 'Almond protein bar', speak: 'That is an almond protein bar.', latency_ms: 1900, first_word_ms: 620, ...(trace ? { trace } : {}) }) as unknown as IrisEvent
+  const timings = { mode: 'identify', frame: { source: 'recent', age_ms: 420 }, latency_ms: { wake: 2100, context: 4, first_word: 620, total: 1900 } }
+  it('adds the steps that finish after the answer went out', () => {
+    const before = load([answer(timings)])
+    expect(askLine(before.events[0] as AnswerEvent)).toBe('Heard “Iris” 2.1 s before the question arrived. Used a frame 420 ms old. First word 620 ms, answer written 1.9 s.')
+    const late = { type: 'answer_timing', session_id: 'judge-01', at: at(41), ask_id: 'a_0001',
+      latency_ms: { ...timings.latency_ms, display: 910, speech: 1150, first_audio: 1400 } } as unknown as IrisEvent
+    const after = reduce(before, { type: 'event', event: late })
+    expect(after.events).toHaveLength(1)
+    expect(askLine(after.events[0] as AnswerEvent)).toBe('Heard “Iris” 2.1 s before the question arrived. Used a frame 420 ms old. First word 620 ms, on the glasses 910 ms, voice playing 1.4 s, answer written 1.9 s.')
+  })
+  it('ignores a timing for a question it never saw, and still reads an answer without timings', () => {
+    const mind = load([answer()])
+    const stray = { type: 'answer_timing', session_id: 'judge-01', at: at(41), ask_id: 'a_0099', latency_ms: { first_audio: 5 } } as unknown as IrisEvent
+    expect(reduce(mind, { type: 'event', event: stray })).toBe(mind)
+    expect(askLine(mind.events[0] as AnswerEvent)).toBe('Answered in 1.9 s, first word at 620 ms.')
+  })
+  it('says when a new frame was taken, and shows the voice as ready until the phone reports it playing', () => {
+    const mind = load([answer({ mode: 'ask', frame: { source: 'fresh', age_ms: 0 }, latency_ms: { context: 180, first_word: 700, display: 1100, speech: 1300, total: 1500 } })])
+    expect(askLine(mind.events[0] as AnswerEvent)).toBe('Took a new frame. First word 700 ms, on the glasses 1.1 s, voice ready 1.3 s, answer written 1.5 s.')
   })
 })
