@@ -216,6 +216,11 @@ function requestOrigin(url: string): string {
   return new URL(url).origin;
 }
 
+/** Moment ids are whole numbers. Anything else can't exist, so it's a 404, not a failed database query. */
+function isMomentId(id: string): boolean {
+  return /^\d{1,15}$/.test(id);
+}
+
 type Candidate = {
   id: number;
   captured_at: Date;
@@ -397,6 +402,7 @@ app.get("/moments/:id/image", async (c) => {
     const { sessionId, denied } = await resolveSession(c, c.req.query("session_id"));
     if (denied) return denied;
     if (!sessionId) return c.json({ error: "missing session_id" }, 400);
+    if (!isMomentId(c.req.param("id"))) return c.json({ error: "not found" }, 404);
     const { rows } = await pool.query<{ image_key: string | null }>(
       "SELECT image_key FROM memories WHERE id = $1 AND session_id = $2",
       [c.req.param("id"), sessionId],
@@ -418,6 +424,7 @@ app.get("/moments/:id/depth", async (c) => {
     const { sessionId, denied } = await resolveSession(c, c.req.query("session_id"));
     if (denied) return denied;
     if (!sessionId) return c.json({ error: "missing session_id" }, 400);
+    if (!isMomentId(c.req.param("id"))) return c.json({ error: "not found" }, 404);
     const { rows } = await pool.query<{ depth_key: string | null }>(
       "SELECT depth_key FROM memories WHERE id = $1 AND session_id = $2",
       [c.req.param("id"), sessionId],
@@ -439,6 +446,7 @@ app.put("/moments/:id/depth", async (c) => {
     const { sessionId, denied } = await resolveSession(c, c.req.query("session_id"));
     if (denied) return denied;
     if (!sessionId) return c.json({ error: "missing session_id" }, 400);
+    if (!isMomentId(c.req.param("id"))) return c.json({ error: "not found" }, 404);
     const png = Buffer.from(await c.req.arrayBuffer());
     const isPng = png.length > 8 && png.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
     if (!isPng) return c.json({ error: "body must be a PNG" }, 400);
