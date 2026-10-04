@@ -7,8 +7,12 @@ Neon Object Storage). This agent searches it and says where and when the thing w
   python agent_memory.py address  # print the agent address and stop
   python agent_memory.py check    # self-check, no network
 
-Which session it searches: one named in the message ("... session judge-02"), else the session
-running on the brain, else MEMORY_AGENT_SESSION, else judge-01.
+Which session it searches: one named anywhere in the message ("... in session judge-02 ..."), else
+the session running on the brain, else MEMORY_AGENT_SESSION, else judge-01.
+
+ASI:One rewrites what a person typed before it reaches an agent ("Please search session judge-02
+and return the place, time and photo"), so the object being looked for is picked out here and
+handed to memory, rather than left for memory to guess from the last words of the message.
 """
 import os
 import re
@@ -18,6 +22,7 @@ from datetime import datetime, timezone
 import httpx
 
 import agent_kit
+import ahead
 
 BRAIN = os.getenv("BRAIN_URL") or "http://127.0.0.1:8000"
 DEFAULT_SESSION = os.getenv("MEMORY_AGENT_SESSION") or "judge-01"
@@ -27,7 +32,15 @@ DESCRIPTION = (
 )
 GREETING = ("Ask me where you last saw something, for example: where did I leave my keys? "
             "I search what the Iris glasses saved and tell you where and when.")
-NAMED_SESSION = re.compile(r"[\s,;(]*\b(?:in |for )?session[:=\s]+([A-Za-z0-9][\w.-]{0,79})\)?\s*$", re.I)
+# "session judge-02", "session: memtest-2229", "session id abc-1": an id has a digit or a hyphen in it, so
+# "the jam session was" is not one.
+NAMED_SESSION = re.compile(r"[\s,;(]*\b(?:in |for |from )?(?:the )?session(?: id)?\s*[:=]?\s*[\"'`]?"
+                           r"((?=[\w.-]*[\d-])[A-Za-z0-9][\w.-]{0,79})[\"'`]?\)?", re.I)
+QUOTED = re.compile(r"keyword\s+[\"'“]([^\"'”]{2,40})[\"'”]", re.I)
+OWNED = re.compile(r"\b(?:my|their|the user's|his|her)\s+((?:[a-z]+\s){0,2}?[a-z]+?)(?=\s*(?:\?|\.|,|$|\s(?:is|was|are|were|in|on|at|and|last)\b))", re.I)
+NOT_THINGS = {"saved moments", "moments", "memory", "memories", "session", "glasses", "question"}
+TARGET = ("Someone is asking a pair of smart glasses where they last saw something. "
+          "Reply with only the thing they are looking for, in one to three words, lower case. If no thing is named, reply none.")
 PHRASE = (
     "You are the memory of a pair of smart glasses. Answer the wearer's question from the saved moments below, "
     "newest first. Say where the thing was and when, in one or two short sentences, using the time given. "
@@ -40,7 +53,38 @@ def split_session(text):
     m = NAMED_SESSION.search(text or "")
     if not m:
         return (text or "").strip(), None
-    return text[:m.start()].strip(), m.group(1)
+    rest = re.sub(r"\s{2,}", " ", (text[:m.start()] + " " + text[m.end():])).strip()
+    return rest, m.group(1).rstrip(".")
+
+
+def target_by_rules(question):
+    """The thing being looked for, without a model: a quoted keyword, a thing people carry, or "my <thing>"."""
+    q = question or ""
+    m = QUOTED.search(q)
+    if m:
+        return m.group(1).strip().lower()
+    carried = [(re.search(pattern, q, re.I), item) for item, pattern in ahead.ITEMS.items()]
+    carried = [(m.start(), m.group(0).lower()) for m, _item in carried if m]
+    if carried:
+        return min(carried)[1]
+    for m in OWNED.finditer(q):
+        thing = m.group(1).strip().lower()
+        if thing not in NOT_THINGS:
+            return thing
+    return None
+
+
+async def target_of(question):
+    """-> the thing to search for, or None to let memory work it out from the question."""
+    found = target_by_rules(question)
+    if found:
+        return found
+    try:
+        said, _model = await agent_kit.think(TARGET, question, timeout=3, max_tokens=12)
+        said = said.strip().strip(".\"'").lower()
+        return said if said and said != "none" and len(said) <= 40 else None
+    except Exception:  # noqa: BLE001 - memory's own guess is the fallback
+        return None
 
 
 def when(captured_at, now=None):
@@ -79,7 +123,7 @@ async def answer(text, sender, search=None, now=None):
     if search is None:
         from memory.adapter import shared_async_client
         search = shared_async_client().search
-    result = await search(session, question)
+    result = await search(session, question, await target_of(question))
     moment, target = result.get("moment"), result.get("target") or ""
     if result.get("error"):
         return "I can't reach Iris's memory right now. Try again in a moment."
@@ -121,6 +165,15 @@ def check():
     assert split_session("where are my keys? session judge-02") == ("where are my keys?", "judge-02")
     assert split_session("where are my keys (session: memtest-2229)") == ("where are my keys", "memtest-2229")
     assert split_session("where was the jam session") == ("where was the jam session", None)
+    # ASI:One's own rewordings, as they arrived:
+    one = "Where did the user last see their umbrella? Please search session memtest-2229 and return the place, time, and photo if available."
+    two = 'Please search my saved moments in session memtest-2229 for the keyword "umbrella". Tell me where and when I last saw my umbrella.'
+    assert split_session(one) == ("Where did the user last see their umbrella? Please search and return the place, time, and photo if available.", "memtest-2229")
+    assert split_session(two)[1] == "memtest-2229" and target_by_rules(split_session(two)[0]) == "umbrella"
+    assert target_by_rules(split_session(one)[0]) == "umbrella"
+    assert target_by_rules("where did I leave my keys?") == "keys" and target_by_rules("Where is my red notebook?") == "red notebook"
+    assert target_by_rules("where was the smoke detector") is None           # no owner, not a carried thing: the model or memory decides
+    assert split_session("find my phone in session: judge-02.")[1] == "judge-02"
     assert split_session("where did I leave my phone?") == ("where did I leave my phone?", None)
     now = datetime(2026, 10, 4, 1, 47, tzinfo=timezone.utc)
     assert "(35 minutes ago)" in when("2026-10-04T01:12:00Z", now) and when("nonsense") == ""
@@ -134,14 +187,14 @@ def check():
         real = agent_kit.think
         asked = []
 
-        async def found(session, question):
-            asked.append((session, question))
+        async def found(session, question, target=None):
+            asked.append((session, question, target))
             return {"moment": moment, "target": "umbrella", "top": [moment]}
 
-        async def nothing(session, question):
+        async def nothing(session, question, target=None):
             return {"moment": None, "target": "phone", "top": []}
 
-        async def down(session, question):
+        async def down(session, question, target=None):
             return {"moment": None, "target": "", "top": [], "error": "timed out"}
 
         async def no_model(*a, **k):
@@ -153,7 +206,7 @@ def check():
 
         agent_kit.think = no_model
         reply = await answer("where did I leave my umbrella? session memtest-2229", "agent1q", found, now)
-        assert asked == [("memtest-2229", "where did I leave my umbrella?")]
+        assert asked == [("memtest-2229", "where did I leave my umbrella?", "umbrella")]
         assert reply.splitlines()[0].startswith("Last seen at") and "Photo: https://memory.example" in reply
         assert reply.endswith('Searched session memtest-2229 for "umbrella".')
         agent_kit.think = asi
