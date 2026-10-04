@@ -55,7 +55,7 @@ function openai(): OpenAI {
 const EMBED_MODEL = process.env.EMBED_MODEL || "text-embedding-3-small"; // must produce 1536 dimensions to match the table
 const VISION_MODEL = process.env.VISION_MODEL || "gpt-4o-mini";
 const DEDUPE_THRESHOLD = Number(process.env.DEDUPE_THRESHOLD || "0.95");
-const MIN_SIMILARITY = Number(process.env.SEARCH_MIN_SIMILARITY || "0.30");
+const MIN_SIMILARITY = Number(process.env.SEARCH_MIN_SIMILARITY || "0.45");
 const MAX_IMAGE_BYTES = 2_000_000;
 
 // Time budgets. Search is one embedding call and one query, so it answers well
@@ -225,6 +225,22 @@ type Candidate = {
   has_depth: boolean;
 };
 
+/**
+ * Which candidate answers the question. "Where is it" means "where did I last
+ * see it", so the newest real match wins. A moment that names the object is a
+ * real match. Only when none does is a moment that just resembles it accepted,
+ * and then it has to clear the similarity floor: unrelated moments in one room
+ * score around 0.2 to 0.3 against each other.
+ */
+export function pickMoment<T extends Pick<Candidate, "captured_at" | "similarity" | "keyword_match">>(
+  rows: T[],
+  minSimilarity = MIN_SIMILARITY,
+): T | undefined {
+  const named = rows.filter((r) => r.keyword_match);
+  const matches = named.length ? named : rows.filter((r) => r.similarity > minSimilarity);
+  return [...matches].sort((a, b) => +b.captured_at - +a.captured_at)[0];
+}
+
 // ---------------------------------------------------------------- routes
 
 /** A database or network hiccup returns a clear 503 instead of crashing the request. */
@@ -312,9 +328,7 @@ app.post("/search", async (c) => {
       [sessionId, JSON.stringify(embedding), target],
     );
 
-    // "Where is it" means "where did I last see it", so among real matches take the newest.
-    const matches = rows.filter((r) => r.keyword_match || r.similarity >= MIN_SIMILARITY);
-    const best = [...matches].sort((a, b) => +b.captured_at - +a.captured_at)[0];
+    const best = pickMoment(rows);
     const base = requestOrigin(c.req.url);
     const shape = (r: Candidate) => ({ ...r, ...momentUrls(base, r.id, sessionId) });
 

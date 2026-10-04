@@ -29,7 +29,7 @@ export default defineConfig({
         VISION_MODEL: process.env.VISION_MODEL ?? "gpt-4o-mini",
         DESCRIBE_URL: process.env.DESCRIBE_URL ?? "",
         DEDUPE_THRESHOLD: process.env.DEDUPE_THRESHOLD ?? "0.95",
-        SEARCH_MIN_SIMILARITY: process.env.SEARCH_MIN_SIMILARITY ?? "0.30",
+        SEARCH_MIN_SIMILARITY: process.env.SEARCH_MIN_SIMILARITY ?? "0.45",
         WEB_ORIGIN: process.env.WEB_ORIGIN ?? "*",
         UPLOADS_BUCKET: "uploads",
       },

@@ -103,4 +103,4 @@ Search is one embedding call and one database query, so it answers well inside t
 
 `DEDUPE_THRESHOLD` (0.95) is how similar a frame must be to the last saved one to be skipped. Lower it if near-identical frames pile up, raise it if real changes get skipped.
 
-`SEARCH_MIN_SIMILARITY` (0.30) is the floor for counting a frame as a match by meaning alone. Run the seed script with real photos and look at the `sim=` numbers to set it. Changing either means redeploying the function.
+`SEARCH_MIN_SIMILARITY` (0.45) is the floor for counting a frame as a match by meaning alone, and it only applies when no moment names the object: if any does, the newest of those is the answer. Run the seed script with real photos and look at the `sim=` numbers to set it. Changing either means redeploying the function.
