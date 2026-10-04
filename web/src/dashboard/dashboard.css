@@ -51,19 +51,21 @@
   mask-image: radial-gradient(ellipse calc(var(--hw) * 1.9) calc(var(--hh) * 1.9) at var(--hx) var(--hy), transparent 54%, #000 100%);
   transition: opacity .6s, --hx .8s cubic-bezier(.2,.7,.2,1), --hy .8s cubic-bezier(.2,.7,.2,1), --hw .8s cubic-bezier(.2,.7,.2,1), --hh .8s cubic-bezier(.2,.7,.2,1);
 }
+/* The ring is a fixed width in pixels, so a large box gets a fine line of light, not a thick band. */
 .mind-halo {
+  --ring: 30px;
   position: absolute; opacity: 0; pointer-events: none;
-  left: calc(var(--hx) - var(--hw) * 1.45); top: calc(var(--hy) - var(--hh) * 1.45);
-  width: calc(var(--hw) * 2.9); height: calc(var(--hh) * 2.9);
-  background: radial-gradient(closest-side, rgba(154,120,255,.06) 0, rgba(154,120,255,.1) 50%, rgba(154,120,255,.72) 71%, rgba(154,120,255,.22) 86%, transparent 100%);
-  filter: blur(8px);
+  left: calc(var(--hx) - var(--hw) - var(--ring)); top: calc(var(--hy) - var(--hh) - var(--ring));
+  width: calc(var(--hw) * 2 + var(--ring) * 2); height: calc(var(--hh) * 2 + var(--ring) * 2);
+  background: radial-gradient(closest-side, rgba(154,120,255,.05) 0, rgba(154,120,255,.06) calc(100% - 50px), rgba(154,120,255,.7) calc(100% - 30px), rgba(154,120,255,.18) calc(100% - 14px), transparent 100%);
+  filter: blur(6px);
   transition: opacity .6s, --hx .8s cubic-bezier(.2,.7,.2,1), --hy .8s cubic-bezier(.2,.7,.2,1), --hw .8s cubic-bezier(.2,.7,.2,1), --hh .8s cubic-bezier(.2,.7,.2,1);
 }
 .mind-frame[data-looking=true] .mind-shade { opacity: 1 }
 .mind-frame[data-looking=stale] .mind-shade { opacity: .45 }
-.mind-frame[data-looking=stale] .mind-halo { opacity: .35 }
-.mind-frame[data-looking=true] .mind-halo { opacity: .8; animation: mind-breathe 3.2s ease-in-out infinite alternate }
-.mind-frame[data-level=speak] .mind-halo, .mind-frame[data-level=display] .mind-halo { opacity: 1; filter: blur(7px) brightness(1.35) }
+.mind-frame[data-looking=stale] .mind-halo { opacity: calc(var(--glow, 1) * .35) }
+.mind-frame[data-looking=true] .mind-halo { opacity: calc(var(--glow, 1) * .8); animation: mind-glow 3.2s ease-in-out infinite alternate }
+.mind-frame[data-looking=true][data-level=speak] .mind-halo, .mind-frame[data-looking=true][data-level=display] .mind-halo { opacity: var(--glow, 1); filter: blur(7px) brightness(1.35) }
 .mind-frame figcaption {
   position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-between; align-items: end; gap: 16px;
   padding: 44px 16px 13px; font-size: 13px; color: #e4e4e8; background: linear-gradient(transparent, rgba(8,8,10,.72));
@@ -153,6 +155,7 @@ button.mind-when:hover, .mind-moment[data-held=true] .mind-when { color: var(--l
 
 @keyframes mind-rise { from { opacity: 0; transform: translateY(7px) } }
 @keyframes mind-breathe { from { opacity: .55 } }
+@keyframes mind-glow { from { opacity: calc(var(--glow, 1) * .5) } }
 
 /* ---- small screens: one column that scrolls ---- */
 @media (max-width: 900px) {

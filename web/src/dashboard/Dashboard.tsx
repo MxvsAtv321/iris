@@ -80,6 +80,19 @@ function useLoaded(url: string | null) {
   return { loaded, missing: missing === url }
 }
 
+/** Where the halo sits. A box that fills most of the frame would turn the ring into a violet wash, so the ring
+ *  stops growing at about two thirds of the frame, stays inside it, and fades as the box grows. */
+function haloOf([x, y, w, h]: [number, number, number, number]): Record<string, string> {
+  const half = (size: number) => Math.min(Math.max(size / 2, .06), .33)
+  const hw = half(w), hh = half(h)
+  const centre = (start: number, size: number, reach: number) => Math.min(Math.max(start + size / 2, reach + .04), 1 - reach - .04)
+  const cover = Math.min(w * h, 1)
+  return {
+    '--hx': `${centre(x, w, hw) * 100}%`, '--hy': `${centre(y, h, hh) * 100}%`, '--hw': `${hw * 100}%`, '--hh': `${hh * 100}%`,
+    '--glow': String(Math.min(1, Math.max(.4, 1.15 - cover * 1.5))),
+  }
+}
+
 function Frame({ decision, held, state, onLive }: { decision?: Decision; held: boolean; state: string; onLive: () => void }) {
   const trace = decision?.trace
   // A frame the brain couldn't capture has no picture of its own; the latest one it holds stands in.
@@ -87,7 +100,7 @@ function Frame({ decision, held, state, onLive }: { decision?: Decision; held: b
   // The box belongs to the frame Iris last judged. Once the scene has moved on it is only where Iris last looked, so it dims.
   const box = decision?.focus_box ?? null
   const looking = !box ? 'false' : trace?.looked || trace?.skipped === 'no_change' ? 'true' : 'stale'
-  const halo: Record<string, string> = box ? { '--hx': `${(box[0] + box[2] / 2) * 100}%`, '--hy': `${(box[1] + box[3] / 2) * 100}%`, '--hw': `${Math.max(box[2] / 2, .06) * 100}%`, '--hh': `${Math.max(box[3] / 2, .06) * 100}%` } : {}
+  const halo: Record<string, string> = box ? haloOf(box) : {}
   const empty = state === 'offline' ? 'Can’t reach the brain. This screen picks up again as soon as it is back.'
     : state === 'connecting' ? 'Connecting to the brain.'
     : state === 'idle' ? 'No session is running. Start one from the phone. This screen only watches.'
