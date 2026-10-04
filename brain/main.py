@@ -20,6 +20,7 @@ from pydantic import BaseModel
 import ahead
 import camera
 import gate
+import hud_text
 import jev
 import live
 import llm  # loads .env
@@ -49,7 +50,7 @@ WATCH_TIMEOUT_S = 12           # per model; the loop can wait, a reasoning watch
 # is fine). If it hasn't started writing after WATCH_LATE_S, this model is asked too and whichever starts first is used.
 WATCH_LATE_MODEL = (os.getenv("WATCH_LATE_MODEL") or "").strip()
 WATCH_LATE_S = float(os.getenv("WATCH_LATE_S") or 2.5)
-FALLBACK = "Didn't catch that, try again"
+FALLBACK = "Say again"            # short enough for the glasses even when the text area is narrow
 NO_PHOTO = "\n(The camera didn't respond, so there is no photo. If the question needs one, say you can't see right now.)"
 HERE = Path(__file__).resolve().parent
 STATE = Path(os.getenv("IRIS_STATE") or HERE / "state.json")   # a second brain on this laptop (tests) must not share the first one's
@@ -262,12 +263,26 @@ async def show(text, eye=""):
     """Put one line on the glasses. Returns False when the display doesn't answer.
     eye="answer": the eye blinks, the text shows, then the eye rests open and closes.
     eye="nudge": the eye flicks open and blinks, the text shows, then the display goes dark.
-    Without eye the text stays until it is replaced."""
-    line = (text or "")[:40]
+    Without eye the text stays until it is replaced.
+    The line is kept to what the display shows at a readable size, shortened at a word if it has to be."""
+    line = hud_text.display(text)
     params = {"text": line}
     if eye:
         params.update(eye=eye, hold=min(7000, 3000 + 70 * len(line)))   # longer lines stay up longer
     return await hud("/show", params)
+
+
+async def learn_display():
+    """Ask the display which area it fits text into (/calibrate moves and resizes it on the board), so the brain
+    shortens lines for the same space. Never raises; a display that doesn't say leaves the usual area in place."""
+    try:
+        async with hud_lock:
+            r = await http.get(HUD + "/status", timeout=1)
+        area = r.json().get("area") or {}
+        if hud_text.set_area(area.get("w"), area.get("h")):
+            log.info("display area %sx%s", area.get("w"), area.get("h"))
+    except Exception as e:  # noqa: BLE001
+        log.info("display area: %s", e)
 
 
 async def eye(anim):
@@ -402,7 +417,7 @@ async def tick(sid, fid, trace):
     if left and not busy:
         trace["ahead"] = left
         w = {**w, **ahead.nudge(left)}
-    line, say = str(w.get("text") or "")[:40], str(w.get("say") or "")
+    line, say = hud_text.display(w.get("text")), str(w.get("say") or "")
     if jev.ON and (line or say):       # Iris has something it could say: System 1 decides how much it matters
         opinion = await jev.interrupt(w, s["said"])
         if opinion:                    # no usable answer in time: the vision model's own urgency stands
@@ -518,6 +533,7 @@ async def lifespan(app):
         bg(llm.warm())
     bg(live.prefetch(http))
     bg(setup_camera())
+    bg(learn_display())
     yield
     for t in tasks:
         t.cancel()
@@ -547,6 +563,7 @@ async def start_session(body: SessionIn):
     watch["ref"], watch["box"] = None, None
     save_state()
     bg(live.prefetch(http))
+    bg(learn_display())               # /calibrate may have moved the display's text area since the last session
     return {"session_id": sid, "earlier": len(s["earlier"])}
 
 
@@ -795,8 +812,8 @@ async def trace_so_far():
 
 @app.post("/api/show")
 async def show_text(body: ShowIn):
-    """One line on the glasses, for the Act agent. Under 40 characters stays in the large font."""
-    line = (body.text or "").strip()[:40]
+    """One line on the glasses, for the Act agent. Short lines show large; a long one is shortened at a word."""
+    line = hud_text.display(body.text)
     return {"text": line, "shown": await show(line) if line else False}
 
 

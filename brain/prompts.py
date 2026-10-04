@@ -4,6 +4,8 @@ Run `python prompts.py` for the self-check.
 """
 import re
 
+import hud_text
+
 STYLE = "Answer first. No preamble. Never say 'I can see' or describe the photo unless asked."
 
 WATCH = f"""You are Iris, a clip-on that makes glasses think ahead. The photo is what the wearer sees right now.
@@ -12,7 +14,7 @@ Decide whether anything in it is worth interrupting them for. Most moments are n
 Reply with ONE JSON object and nothing else:
 {{"description": "one plain sentence about the scene, for memory search later",
  "urgency": 0-10,
- "text": "under 40 characters for the glasses display, or empty",
+ "text": "at most 18 characters for the tiny glasses display (two or three short words, or a number and its unit), or empty",
  "say": "one short sentence to speak, or empty",
  "topic": "short-kebab-case key for what this is about",
  "reason": "why this urgency, under 12 words",
@@ -31,7 +33,7 @@ Be specific: name the line and the fix, e.g. text "Line 2: 7x8 is 56", say "Line
 {STYLE}"""
 
 TWO_LINES = """Reply with exactly two lines and nothing else:
-line 1: the answer in under 40 characters, for a tiny display in the glasses
+line 1: the answer in at most 18 characters, for a tiny display in the glasses: a number and its unit, or two or three short words, e.g. "12g protein"
 line 2: the same answer spoken aloud, one or two short sentences"""
 
 BASE = (
@@ -95,11 +97,17 @@ def _context(s):
     return parts
 
 
+def _narrow(field):
+    """When the display's text area has been made narrow, say so, so the line is written to fit it."""
+    hint = hud_text.hint()
+    return [f"About {field}: {hint}"] if hint else []
+
+
 def build_watch(s):
     parts = _context(s)
     if s.get("said"):
         parts.append("Already told the wearer (do not repeat):\n" + format_lines(s["said"], 3))
-    return "\n\n".join(parts + ["Judge this photo."])
+    return "\n\n".join(parts + _narrow("text") + ["Judge this photo."])
 
 
 def build_ask(question, s, memory_note="", live_note=""):
@@ -108,19 +116,20 @@ def build_ask(question, s, memory_note="", live_note=""):
         parts.append("Memory notes:\n" + memory_note)
     if live_note:
         parts.append("Live data (fetched just now; use it only if the question needs it):\n" + live_note)
-    return "\n\n".join(parts + ["Question: " + question])
+    return "\n\n".join(parts + _narrow("line 1") + ["Question: " + question])
 
 
 LABEL = re.compile(r"^\s*(line\s*\d\s*[:.)-]\s*|display\s*:\s*|spoken?\s*:\s*)", re.I)
 
 
 def split_answer(text):
-    """Two-line model reply -> (display, speak)."""
+    """Two-line model reply -> (display, speak). The display line is kept to what the glasses show at a readable
+    size: a model that wrote too much is shortened at a word (hud_text.display), never cut mid-word."""
     lines = [LABEL.sub("", l).strip() for l in (text or "").splitlines()]
     lines = [l for l in lines if l]
     if not lines:
         return "", ""
-    return lines[0][:40], " ".join(lines[1:])
+    return hud_text.display(lines[0]), " ".join(lines[1:])
 
 
 SENTENCE_END = re.compile(r"[.!?][\"')\]]?\s+(?=\S)")
@@ -145,7 +154,8 @@ if __name__ == "__main__":
     assert pick_mode("is this vegan")[0] == "ask"
     assert pick_mode("Irises are pretty")[1] == "Irises are pretty"
     assert split_answer("Line 1: 12g protein per bar\nLine 2: That bar has about 12 grams.") == (
-        "12g protein per bar", "That bar has about 12 grams.")
+        "12g protein", "That bar has about 12 grams.")          # too long for the display: shortened at a word
+    assert split_answer("12g protein\nThat bar has 12 grams.")[0] == "12g protein"
     assert split_answer("") == ("", "")
     assert format_lines(["a" * 10, "b" * 10, "c"], max_chars=14) == "[1 earlier line(s) omitted]\n" + "b" * 10 + "\nc"
     assert DEICTIC.search("is this jacket warm enough") and not DEICTIC.search("is it going to rain")
@@ -158,4 +168,9 @@ if __name__ == "__main__":
     assert first_sentence("Yes. It has 12 grams of protein. That") == "Yes. It has 12 grams of protein."
     assert first_sentence(split_answer("12g protein\nThat bar has 12 grams! Enjoy")[1]) == "That bar has 12 grams!"
     assert first_sentence("") == "" and first_sentence(None) == ""
+    assert "narrow" not in build_ask("q", {}) and "narrow" not in build_watch({})
+    hud_text.set_area(48, 48)                                                        # the display was moved to the screen's edge
+    assert "About line 1: The glasses display is very narrow" in build_ask("q", {}) and "About text:" in build_watch({})
+    assert split_answer("12g protein\nTwelve grams.")[0] == "12g"
+    hud_text.set_area(*hud_text.DEFAULT_AREA)
     print("prompts ok")

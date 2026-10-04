@@ -2,7 +2,7 @@
 
 When the scene turns into a doorway, a corridor or the outdoors, Iris looks back through what it
 has seen this session. If a thing people carry (phone, keys, wallet, bottle...) was last seen
-resting on a table or a desk, and is not in view now, it nudges: "Phone's on the table".
+resting on a table or a desk, and is not in view now, it nudges: "Phone's on table".
 
 It reads the session's own notes first, and asks memory when those say nothing. The nudge then goes
 through the gate like any other, so the cooldown and repeat rules keep it to once.
@@ -94,9 +94,9 @@ def nudge(found):
     """The watch fields that say it: one line for the display, one sentence to speak."""
     item, place = found["item"], found["place"]
     plural = item.endswith("s") and item != "badge"
-    text = f"{item.capitalize()} {'are' if plural else 'is'} on the {place}" if plural else f"{item.capitalize()}'s on the {place}"
+    text = f"{item.capitalize()} on {place}" if plural else f"{item.capitalize()}'s on {place}"   # short: the display is tiny
     say = f"Your {item} {'are' if plural else 'is'} still on the {place}."
-    return {"urgency": URGENCY, "text": text[:40], "say": say, "topic": f"left-behind-{item.replace(' ', '-')}",
+    return {"urgency": URGENCY, "text": text, "say": say, "topic": f"left-behind-{item.replace(' ', '-')}",
             "reason": f"{item} last seen on the {place}; the wearer is leaving"}
 
 
@@ -106,9 +106,9 @@ if __name__ == "__main__":
     door = "An open doorway leading into a corridor with grey carpet."
     found = left_behind(door, notes)
     assert found == {"item": "phone", "place": "table", "seen": "A phone and a set of keys on a wooden table next to a laptop.", "at": "19:02"}
-    assert nudge(found) == {"urgency": 8, "text": "Phone's on the table", "say": "Your phone is still on the table.",
+    assert nudge(found) == {"urgency": 8, "text": "Phone's on table", "say": "Your phone is still on the table.",
                             "topic": "left-behind-phone", "reason": "phone last seen on the table; the wearer is leaving"}
-    assert nudge({"item": "keys", "place": "desk"})["text"] == "Keys are on the desk"
+    assert nudge({"item": "keys", "place": "desk"})["text"] == "Keys on desk"
     assert nudge({"item": "water bottle", "place": "counter"})["say"] == "Your water bottle is still on the counter."
     # Not leaving: no nudge, however long the phone has been on the table.
     assert left_behind("A whiteboard with times tables.", notes) is None
@@ -192,7 +192,7 @@ if __name__ == "__main__":
         main.state["sessions"].pop("ahead-notes", None)
         assert (await look("ahead-notes", table))["level"] == "silent"
         d = await look("ahead-notes", doorway)
-        assert (d["level"], d["text"], d["speak"]) == ("speak", "Phone's on the table", "Your phone is still on the table."), d
+        assert (d["level"], d["text"], d["speak"]) == ("speak", "Phone's on table", "Your phone is still on the table."), d
         assert d["trace"]["ahead"]["item"] == "phone" and d["trace"]["ahead"]["place"] == "table" and d["trace"]["urgency"] == 8
         again = await look("ahead-notes", doorway)                       # still in the corridor: said once, not again
         assert again["level"] == "silent" and again["trace"]["blocked_by"] == "cooldown", again["trace"]
@@ -201,7 +201,7 @@ if __name__ == "__main__":
         main.state["sessions"].pop("ahead-memory", None)
         memory = Memory({"phone": {"id": 7, "description": "phone, charger. A phone charging on a desk.", "keyword_match": True}})
         d = await look("ahead-memory", doorway, memory)
-        assert (d["level"], d["text"]) == ("speak", "Phone's on the desk") and d["trace"]["ahead"]["moment_id"] == 7, d
+        assert (d["level"], d["text"]) == ("speak", "Phone's on desk") and d["trace"]["ahead"]["moment_id"] == 7, d
         assert memory.asked and all(quiet for _item, quiet in memory.asked)     # asked quietly: the garden doesn't react
 
         # Memory down, or only a resemblance with no keyword: no nudge, and the loop carries on.
@@ -216,7 +216,7 @@ if __name__ == "__main__":
         await look("ahead-busy", table)
         hazard = {**doorway, "urgency": 9, "text": "Step down ahead", "say": "Careful, there's a step down.", "topic": "step"}
         d = await look("ahead-busy", hazard)
-        assert d["text"] == "Step down ahead" and d["trace"]["ahead"] is None, d
+        assert d["text"] == "Step down" and d["trace"]["ahead"] is None, d
 
         main.ahead.ON = False                                              # switched off: the loop is as it was
         main.state["sessions"].pop("ahead-off", None)

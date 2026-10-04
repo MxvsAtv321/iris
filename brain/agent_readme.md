@@ -13,7 +13,7 @@ Iris is a clip-on camera and a tiny display on a pair of glasses. This agent is 
 2. Decides the intent: check live conditions, recall a moment, put a line on the display, or choose a next step from the current view.
 3. Fetches only what that intent needs: weather, cloud cover, the moon, the next SpaceX launch, and the ISS (Ann Arbor), or a search over moments the glasses saved.
 4. Picks a concrete next step, such as stay in, look up tonight, bring a jacket, or found it.
-5. Puts that step on the glasses display (one line, under 40 characters) when a session is running, and replies with what it did.
+5. Puts that step on the glasses display (one short line) when a session is running, and replies with what it did.
 
 ## Ask it things like
 
