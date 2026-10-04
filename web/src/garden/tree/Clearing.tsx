@@ -130,8 +130,9 @@ const glowVertex = /* glsl */ `
   varying vec4 vTint;
   void main() {
     vUv = uv;
-    vTint = aTint;
     vec4 mv = modelViewMatrix * vec4(aGlow.xyz, 1.0);
+    // Up close the glow would only wash out the bark and leaves, so it fades as the viewer nears.
+    vTint = vec4(aTint.rgb, aTint.a * smoothstep(10.0, 34.0, -mv.z));
     mv.xy += position.xy * aGlow.w;
     gl_Position = projectionMatrix * mv;
   }

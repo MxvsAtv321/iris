@@ -59,7 +59,7 @@ const fragmentShader = /* glsl */ `
     float thick = smoothstep(0.08, 1.4, vRadius);
 
     // The crown lights the wood from above in violet, the blossoms from all around in gold.
-    vec3 wood = mix(bark, vec3(lum), 0.25);
+    vec3 wood = mix(bark, vec3(lum), 0.15) * (0.55 + 0.9 * lum); // deepen the furrows
     vec3 lit = wood * (vec3(0.55, 0.45, 0.85) * (0.12 + 0.4 * (N.y * 0.5 + 0.5)) + vec3(1.0, 0.72, 0.42) * 0.3);
     lit += vec3(0.60, 0.45, 0.95) * rim * 0.16;
     lit += vec3(1.0, 0.66, 0.34) * (1.0 - thick) * 0.05; // thin branches sit among the leaves
