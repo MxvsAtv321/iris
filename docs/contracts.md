@@ -234,7 +234,17 @@ Every id in every response is a JSON number, never a string.
 
 ### Sessions and Neon Auth
 
-Every moment belongs to a `session_id`, one per judge, and every caller passes it. Neon Auth is enabled on the project (`auth: true` in `neon/neon.ts`) but not used yet, and no page signs judges in. The memory function is ready for it. A request carrying a signed-in judge's Neon Auth token as `Authorization: Bearer <token>` would be scoped to that judge's user id, and a tampered or expired token would get a 401. Requests without a token, which is every request today, use the `session_id` they pass.
+Every moment belongs to a `session_id`, one per judge, and every caller passes it.
+
+Sign-in is off by default, so the demo has no login step. It is switched on with `VITE_JUDGE_SIGN_IN=1` in the root `.env` (restart the web server), or for one phone by opening `/phone?signin=1` once (`?signin=0` switches it off). While it is off the app makes no sign-in request and sends no token.
+
+**Signed in.** With sign-in on, a judge can sign in on the phone page with their name (Settings, "Your name"). That makes them an account in Neon Auth, and the account's id becomes their `session_id`: the brain saves their moments under it and their garden shows only those. The garden's requests for that session carry the judge's Neon Auth token as `Authorization: Bearer <token>`. Memory verifies it and answers for that judge whatever `session_id` the request names; a tampered or expired token gets a 401, and the garden then repeats the request without it.
+
+**Not signed in.** Requests without a token use the `session_id` they pass, as before. This is also the fallback: if sign-in is on but isn't configured, is unreachable, or fails, the phone page offers no sign-in and keeps its no-login session (`judge-01` unless changed in Settings).
+
+The web server passes `/auth/*` on to Neon Auth (`NEON_AUTH_BASE_URL` in the root `.env`), so sign-in is same-origin for the browser. The brain is not involved: to it, a signed-in judge's `session_id` is a session id like any other.
+
+Sign-in gives each judge their own memory; it does not lock it. Photos load by URL with the `session_id` in it, so anyone holding a judge's id (a random UUID) can still read that session.
 
 ### The brain's side
 
