@@ -7,7 +7,9 @@ import httpx
 
 log = logging.getLogger("iris.voice")
 BASE = "https://api.elevenlabs.io/v1"
-VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID") or "21m00Tcm4TlvDq8ikWAM"  # premade "Rachel"
+PREMADE = "21m00Tcm4TlvDq8ikWAM"   # "Rachel", in every ElevenLabs account
+# Iris's own voice is one designed in the team's account (scripts/design_voice.py) and named here.
+VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID") or PREMADE
 
 
 def _key():
@@ -15,25 +17,29 @@ def _key():
 
 
 async def open_tts(http, text):
-    """Start a streamed TTS response, or None if it can't start (caller returns 204)."""
+    """Start a streamed TTS response, or None if it can't start (caller returns 204).
+    If ElevenLabs refuses Iris's own voice (deleted, or a key from another account), the premade one speaks."""
     if not _key() or not text.strip():
         return None
-    req = http.build_request(
-        "POST", f"{BASE}/text-to-speech/{VOICE_ID}/stream",
-        headers={"xi-api-key": _key()},
-        json={"text": text[:500], "model_id": "eleven_flash_v2_5"},
-        timeout=httpx.Timeout(5, connect=2),
-    )
-    try:
-        r = await http.send(req, stream=True)
-    except httpx.HTTPError as e:
-        log.warning("tts failed: %s", e)
-        return None
-    if r.status_code != 200:
-        log.warning("tts HTTP %s: %s", r.status_code, (await r.aread())[:200])
+    for voice in dict.fromkeys([VOICE_ID, PREMADE]):
+        req = http.build_request(
+            "POST", f"{BASE}/text-to-speech/{voice}/stream",
+            headers={"xi-api-key": _key()},
+            json={"text": text[:500], "model_id": "eleven_flash_v2_5"},
+            timeout=httpx.Timeout(5, connect=2),
+        )
+        try:
+            r = await http.send(req, stream=True)
+        except httpx.HTTPError as e:
+            log.warning("tts failed: %s", e)
+            return None                       # the network, not the voice: a second try would only double the wait
+        if r.status_code == 200:
+            return r
+        log.warning("tts HTTP %s with voice %s: %s", r.status_code, voice, (await r.aread())[:200])
         await r.aclose()
-        return None
-    return r
+        if r.status_code not in (400, 401, 403, 404, 422):
+            return None
+    return None
 
 
 class Speech:
@@ -128,6 +134,48 @@ if __name__ == "__main__":
 
         async def aclose(self):
             self.closed = True
+
+    class Reply:
+        def __init__(self, status):
+            self.status_code, self.closed = status, False
+
+        async def aread(self):
+            return b"voice_not_found"
+
+        async def aclose(self):
+            self.closed = True
+
+    class Http:
+        """Answers each voice with a fixed status and remembers which voices were asked for."""
+        def __init__(self, status):
+            self.status, self.asked = status, []
+
+        def build_request(self, method, url, **kw):
+            return url.split("/")[-2]
+
+        async def send(self, voice, stream=False):
+            self.asked.append(voice)
+            return Reply(self.status.get(voice, 200))
+
+    async def check_voice():
+        global VOICE_ID
+        os.environ.setdefault("ELEVENLABS_API_KEY", "test")
+        mine, VOICE_ID = VOICE_ID, "iris-voice"
+        http = Http({})
+        assert (await open_tts(http, "hello")).status_code == 200 and http.asked == ["iris-voice"]
+        http = Http({"iris-voice": 404})                               # Iris's voice is gone: the premade one speaks
+        assert (await open_tts(http, "hello")).status_code == 200 and http.asked == ["iris-voice", PREMADE]
+        http = Http({"iris-voice": 500})                               # ElevenLabs itself is failing: no second try
+        assert await open_tts(http, "hello") is None and http.asked == ["iris-voice"]
+        http = Http({"iris-voice": 404, PREMADE: 401})
+        assert await open_tts(http, "hello") is None and http.asked == ["iris-voice", PREMADE]
+        VOICE_ID = PREMADE                                             # no custom voice set: one try only
+        http = Http({PREMADE: 404})
+        assert await open_tts(http, "hello") is None and http.asked == [PREMADE]
+        assert await open_tts(Http({}), "  ") is None
+        VOICE_ID = mine
+
+    asyncio.run(check_voice())
 
     async def check():
         global open_tts
