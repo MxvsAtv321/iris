@@ -8,7 +8,8 @@
 #   scripts/run_demo.sh restart-brain   restart only the brain (after changing .env); the link stays the same
 #
 # The tunnel is a Cloudflare quick tunnel: no account needed, public, and its address is new every
-# time it starts. `start` writes that address into TUNNEL_HOST in the root .env, then builds the web
+# time it starts. It dies if the laptop changes network (hotspot to WiFi and back); `status` says so and
+# `start` replaces it, with a new address. `start` writes that address into TUNNEL_HOST in the root .env, then builds the web
 # app and serves the build, so the phone loads a few bundled files instead of the dev server's hundreds.
 # Phones need https for the microphone, which is what the tunnel is for.
 #
@@ -22,7 +23,23 @@ mkdir -p "$RUN"
 
 alive() { [ -f "$RUN/$1.pid" ] && kill -0 "$(cat "$RUN/$1.pid")" 2>/dev/null; }
 host() { grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' "$RUN/tunnel.log" 2>/dev/null | tail -1 | sed 's#https://##'; }
-answers() { curl -s -o /dev/null -m "${2:-3}" -w '%{http_code}' "$1" 2>/dev/null; }
+# The HTTP status of a URL, or 000. The alarm is a hard stop: looking up the name of a tunnel that no longer exists
+# can hang far past curl's own time limit.
+answers() {
+  code="$(perl -e 'alarm shift; exec @ARGV' "$(( ${2:-3} + 2 ))" curl -s -o /dev/null -m "${2:-3}" -w '%{http_code}' "$1" 2>/dev/null)"
+  echo "${code:-000}"
+}
+
+# A quick tunnel does not survive the laptop changing networks: cloudflared keeps running and retrying, but
+# Cloudflare has forgotten the tunnel ("Tunnel not found"), so its address answers nothing. Only a new tunnel,
+# with a new address, fixes that.
+tunnel_dead() {
+  [ -n "$(host)" ] || return 1
+  [ "$(answers "http://127.0.0.1:$WEB_PORT/phone")" = "200" ] || return 1     # the web app is down: not the tunnel's fault
+  [ "$(answers "https://$(host)/phone" 6)" = "200" ] && return 1
+  sleep 3
+  [ "$(answers "https://$(host)/phone" 6)" != "200" ]
+}
 
 set_env() {   # set_env KEY VALUE: replace the line in .env, or add it
   if grep -q "^$1=" "$ROOT/.env" 2>/dev/null; then
@@ -42,7 +59,11 @@ start() {
     echo "started the brain on port $BRAIN_PORT"
   fi
 
-  if alive tunnel && [ -n "$(host)" ]; then echo "tunnel already running"; else
+  if alive tunnel && [ -n "$(host)" ] && ! tunnel_dead; then echo "tunnel already running"; else
+    if alive tunnel; then
+      echo "the tunnel is running but its address no longer works (the network changed); starting a new one"
+      kill "$(cat "$RUN/tunnel.pid")" 2>/dev/null; sleep 1
+    fi
     : > "$RUN/tunnel.log"
     nohup cloudflared tunnel --no-autoupdate --url "http://localhost:$WEB_PORT" > "$RUN/tunnel.log" 2>&1 < /dev/null &
     echo $! > "$RUN/tunnel.pid"
@@ -72,6 +93,9 @@ status() {
   if [ -n "$HOST" ] && alive tunnel; then
     echo "phone page over https:      $(answers "https://$HOST/phone" 6)"
     echo "brain through the tunnel:   $(answers "https://$HOST/api/trace" 6)"
+    if tunnel_dead; then
+      echo "THE LINK IS DEAD: the tunnel did not survive a network change. Run: scripts/run_demo.sh start (the link will be a new one)"
+    fi
     link
   else
     echo "no tunnel address yet"
