@@ -14,6 +14,11 @@ import os
 
 from PIL import Image
 
+from dotenv import load_dotenv
+from pathlib import Path
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")   # settings below come from .env, whoever imports this first
+
 log = logging.getLogger("iris.camera")
 try:
     ROTATE = int(os.getenv("CAMERA_ROTATE") or 0)

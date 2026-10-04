@@ -15,6 +15,11 @@ Run `python ahead.py` for the self-check (no network).
 import os
 import re
 
+from dotenv import load_dotenv
+from pathlib import Path
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")   # settings below come from .env, whoever imports this first
+
 ON = (os.getenv("THINK_AHEAD") or "0") == "1"
 URGENCY = 8     # something about to be missed: worth saying out loud, once
 ITEMS = {       # what people carry and leave behind -> how a description names it
