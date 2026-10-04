@@ -120,10 +120,12 @@ def _ingest_headers(
     return headers
 
 
-def _search_body(session_id: str, question: str, target: str | None) -> dict[str, Any]:
+def _search_body(session_id: str, question: str, target: str | None, quiet: bool = False) -> dict[str, Any]:
     body: dict[str, Any] = {"session_id": session_id, "question": question}
     if target:
         body["target"] = target
+    if quiet:
+        body["quiet"] = True     # Iris asking itself: not logged, so the garden doesn't fly to the answer
     return body
 
 
@@ -247,12 +249,12 @@ class AsyncMemoryClient(_Base):
             log.info("memory warm failed: %s", e)
             return False
 
-    async def search(self, session_id: str, question: str, target: str | None = None) -> dict:
+    async def search(self, session_id: str, question: str, target: str | None = None, quiet: bool = False) -> dict:
         if not self.enabled:
             return empty_search(target, "memory is off")
         started = time.monotonic()
         try:
-            r = await self.http.post(f"{self.base}/search", json=_search_body(session_id, question, target), timeout=SEARCH_TIMEOUT_S)
+            r = await self.http.post(f"{self.base}/search", json=_search_body(session_id, question, target, quiet), timeout=SEARCH_TIMEOUT_S)
             r.raise_for_status()
             return r.json()
         except Exception as e:

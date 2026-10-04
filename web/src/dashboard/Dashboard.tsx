@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
-import { askLine, keyOf, lullLine, ms, RULE_LABEL, thoughts, verdict, type AnswerEvent, type Decision, type Metrics, type MindEvent, type Tally, type Thought } from './mind'
+import { aheadLine, askLine, keyOf, lullLine, ms, RULE_LABEL, thoughts, verdict, type AnswerEvent, type Decision, type Metrics, type MindEvent, type Tally, type Thought } from './mind'
 import { useMind } from './useMind'
 import './dashboard.css'
 
@@ -143,6 +143,7 @@ function Moment({ decision, expanded, held, onPin, style }: { decision: Decision
         {t.why && t.why !== t.saw ? t.why : t.urgency === null ? 'No urgency came back.' : `Urgency ${t.urgency} of 10.`}
         {expanded && t.urgency !== null && <Urgency urgency={t.urgency} displayAt={t.display_at} speakAt={t.speak_at} />}
         {!expanded && t.urgency !== null && <span className="mind-aside"> Urgency {t.urgency}.</span>}
+        {t.ahead && <span className="mind-aside mind-ahead"> {aheadLine(t)}</span>}
         {expanded && checked && <ol className="mind-rules">{t.rules.map(r => <li key={r.rule} data-outcome={r.outcome}>
           <span>{RULE_LABEL[r.rule]}</span>
           <span>{r.outcome === 'not_checked' ? 'not checked' : r.outcome}{r.similarity !== undefined ? `, similarity ${r.similarity.toFixed(2)} of ${r.threshold}` : ''}{r.detail ? `: ${r.detail}` : ''}</span>

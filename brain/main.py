@@ -17,6 +17,7 @@ from fastapi.responses import Response, StreamingResponse
 from PIL import Image
 from pydantic import BaseModel
 
+import ahead
 import gate
 import live
 import llm  # loads .env
@@ -293,7 +294,35 @@ async def decision(sid, fid, level, reason, box, text="", speak="", trace=None):
 # Every decision's trace has all of these keys; a frame the model never judged keeps the blanks.
 BLANK_TRACE = dict(frame_url=None, looked=False, skipped=None, change=None, saw="", why="", topic="", model=None,
                    candidate={"text": "", "say": ""}, urgency=None, display_at=gate.DISPLAY_AT, speak_at=gate.SPEAK_AT,
-                   proposed="silent", rules=[], blocked_by=None, latency_ms={})
+                   proposed="silent", rules=[], blocked_by=None, latency_ms={}, ahead=None)
+
+
+AHEAD_ASKS = ("phone", "keys", "water bottle")   # what memory is asked about when the notes say nothing
+
+
+async def left_behind(sid, s, description):
+    """What the wearer is walking away from, or None. Never raises.
+    The session's own notes answer first: they are instant, and hold the last 20 scenes. For a thing they
+    never mention, memory is asked where it was last seen (quietly: nobody asked, so the garden stays put)."""
+    if not ahead.ON or not ahead.leaving(description):
+        return None
+    found = ahead.left_behind(description, s["descriptions"])
+    if found or not memory_client:
+        return found
+    known = ahead.items_in(description).union(*(ahead.items_in(d) for d in s["descriptions"]))
+    wanted = [item for item in AHEAD_ASKS if item not in known]
+    try:
+        hits = await asyncio.wait_for(asyncio.gather(*(
+            memory_client().search(sid, f"where did I leave my {item}", target=item, quiet=True) for item in wanted)), 1.5)
+    except Exception as e:  # noqa: BLE001 - memory is slow or down: no nudge is the safe answer
+        log.info("think ahead: memory did not answer: %s", e)
+        return None
+    for item, hit in zip(wanted, hits):
+        moment = hit.get("moment") or {}
+        found = ahead.left_at(item, moment.get("description")) if moment.get("keyword_match") else None
+        if found:
+            return {**found, "moment_id": moment.get("id")}
+    return None
 
 
 async def tick(sid, fid, trace):
@@ -338,6 +367,14 @@ async def tick(sid, fid, trace):
         lat["total"] = ms(t0)
         return await decision(sid, fid, "silent", "bad model output", None, trace=trace)
     box = watch["box"] = gate.to_focus_box(w.get("box_2d"))
+    left = await left_behind(sid, s, str(w.get("description") or ""))
+    try:
+        busy = float(w.get("urgency") or 0) >= gate.SPEAK_AT      # something in view matters more than what was left
+    except (TypeError, ValueError):
+        busy = False
+    if left and not busy:
+        trace["ahead"] = left
+        w = {**w, **ahead.nudge(left)}
     line, say = str(w.get("text") or "")[:40], str(w.get("say") or "")
     t_gate = time.perf_counter()
     level, reason, judged = gates[sid].explain(w)
