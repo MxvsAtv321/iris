@@ -27,6 +27,7 @@ IRIS = (63.5, 30.5)
 IRIS_R, PUPIL_R = 20.5, 6.5
 FIBRES = 30                                   # multiple of 3: the fibre pattern repeats every three
 INSET = 2.0                                   # the iris stays this far inside the lids
+GAP_HALF = math.radians(24)                   # half the width of the opening that orbits while thinking
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "preview"
@@ -67,7 +68,7 @@ def circle(c, r, n=240):
     return [(c[0] + r * math.cos(2 * math.pi * i / n), c[1] + r * math.sin(2 * math.pi * i / n)) for i in range(n + 1)]
 
 
-def shapes(openness=1.0, pupil=PUPIL_R, iris=IRIS_R, turn=0.0, ripple=0.0, phase=0.0):
+def shapes(openness=1.0, pupil=PUPIL_R, iris=IRIS_R, turn=0.0, ripple=0.0, phase=0.0, gap=None):
     """The drawing as vector paths: -> (lid paths, iris paths, upper bow, lower bow)."""
     up, lo = lids(openness)
     xs = [CX - HALF_W + i * (2 * HALF_W) / 160 for i in range(161)]
@@ -80,10 +81,23 @@ def shapes(openness=1.0, pupil=PUPIL_R, iris=IRIS_R, turn=0.0, ripple=0.0, phase
         lash = [x for x in xs if abs(x - CX) < HALF_W * 0.55 * openness]
         if len(lash) > 2:
             lid_paths.append([(x, lid_y(x, up) - 1.0) for x in lash])
-        iris_paths.append(circle(IRIS, iris))
+        def in_gap(a):       # gap: where an opening in the iris sits, in turns clockwise from the top
+            return gap is not None and abs((a + math.pi / 2 - 2 * math.pi * gap + math.pi) % (2 * math.pi) - math.pi) < GAP_HALF
+        rim = [q for q in range(241) if not in_gap(2 * math.pi * q / 240)]
+        runs, run = [], []
+        for q in rim:        # the iris ring, broken where the gap is
+            if run and q != run[-1] + 1:
+                runs.append(run)
+                run = []
+            run.append(q)
+        runs.append(run)
+        for run in runs:
+            iris_paths.append([(IRIS[0] + iris * math.cos(2 * math.pi * q / 240), IRIS[1] + iris * math.sin(2 * math.pi * q / 240)) for q in run])
         iris_paths.append(circle(IRIS, pupil))
         for i in range(FIBRES):
             a = 2 * math.pi * (i + turn) / FIBRES - math.pi / 2
+            if in_gap(a):
+                continue
             wave = math.sin(2 * math.pi * (3 * i / FIBRES - phase))
             kind = i % 3
             inner = pupil + (2.2, 5.5, 2.2)[kind] + ripple * 0.4 * wave
@@ -99,6 +113,7 @@ def frame(**kw):
 
     openness  0 shut .. 1 open          pupil, iris  radii in pixels
     turn      rotation of the fibres, in fibre spacings
+    gap       where an opening in the ring and fibres sits, in turns from the top; None for a whole iris
     ripple    how far the fibre ends travel in and out (pixels), phase where the wave is (turns)
     """
     lid_paths, iris_paths, up, lo = shapes(**kw)
@@ -146,8 +161,8 @@ def animations():
                   + [frame(openness=ease_out((i + 1) / back)) for i in range(back)])
     n = 30   # listening: the pupil is wider and breathes; a ripple runs round the fibres
     a["listening"] = [frame(pupil=PUPIL_R + 2.0 + 0.6 * math.sin(two_pi * i / n), ripple=1.6, phase=i / n) for i in range(n)]
-    n = 45   # thinking: the fibres turn slowly, three spacings per loop so the loop closes exactly
-    a["thinking"] = [frame(turn=3 * i / n) for i in range(n)]
+    n = 60   # thinking: an opening orbits the iris once per loop while the fibres turn three spacings, so the loop closes exactly
+    a["thinking"] = [frame(turn=3 * i / n, gap=i / n) for i in range(n)]
     n = 20   # speaking: iris and pupil swell together, gently
     a["speaking"] = [frame(iris=IRIS_R + 1.2 * math.sin(math.pi * i / n) ** 2, pupil=PUPIL_R + 1.0 * math.sin(math.pi * i / n) ** 2) for i in range(n)]
     n = 7
@@ -179,6 +194,56 @@ def gif(frames, path, repeat=1, hold=0):
     seq[0].save(path, save_all=True, append_images=seq[1:], duration=durations, loop=0, disposal=2)
 
 
+def pages(im):
+    """The frame in the display's own byte order: 8 rows per byte, lowest bit on top, 128 bytes per band of 8 rows."""
+    px = im.load()
+    return bytes(sum(1 << b for b in range(8) if px[x, band * 8 + b]) for band in range(H // 8) for x in range(W))
+
+
+def squeeze(data):
+    """Most bytes are zero. A zero is stored as 0 followed by how many zeros there are (1 to 255)."""
+    out, i = bytearray(), 0
+    while i < len(data):
+        if data[i]:
+            out.append(data[i])
+            i += 1
+        else:
+            n = 1
+            while i + n < len(data) and data[i + n] == 0 and n < 255:
+                n += 1
+            out += bytes((0, n))
+            i += n
+    return bytes(out)
+
+
+LOOPS = ("listening", "thinking", "speaking")
+
+
+def header(a, path):
+    blob, starts, table = bytearray(), [], []
+    for name, frames in a.items():
+        table.append((name, len(starts), len(frames), name in LOOPS))
+        for f in frames:
+            starts.append(len(blob))
+            blob += squeeze(pages(f))
+    starts.append(len(blob))
+    lines = ["// Generated by art/make_eye.py. Do not edit by hand: change the script and run `python make_eye.py header`.",
+             "// Each frame is the display buffer (1024 bytes) with runs of zeros stored as 0, count.",
+             "#pragma once", "#include <Arduino.h>", "",
+             "struct EyeAnim { const char *name; uint16_t first; uint16_t count; bool loops; };", "",
+             f"const uint8_t EYE_ANIM_COUNT = {len(table)};",
+             "const EyeAnim EYE_ANIMS[EYE_ANIM_COUNT] = {"]
+    lines += [f'  {{"{n}", {first}, {count}, {"true" if loops else "false"}}},' for n, first, count, loops in table]
+    lines += ["};", "", f"const uint16_t EYE_FRAME_COUNT = {len(starts) - 1};",
+              "const uint32_t EYE_FRAME_START[EYE_FRAME_COUNT + 1] PROGMEM = {"]
+    lines += ["  " + ", ".join(str(v) for v in starts[i:i + 12]) + "," for i in range(0, len(starts), 12)]
+    lines += ["};", "", f"const uint8_t EYE_DATA[{len(blob)}] PROGMEM = {{"]
+    lines += ["  " + ",".join(str(v) for v in blob[i:i + 32]) + "," for i in range(0, len(blob), 32)]
+    lines += ["};", ""]
+    path.write_text("\n".join(lines))
+    print(f"wrote {path.name}: {len(starts) - 1} frames, {len(blob)} bytes ({len(blob) / (len(starts) - 1):.0f} per frame; unpacked they are 1024)")
+
+
 def main():
     OUT.mkdir(exist_ok=True)
     a = animations()
@@ -188,10 +253,17 @@ def main():
         sheet(frames).save(OUT / f"{name}.png")
         lit = sum(f.convert("L").histogram()[255] for f in frames) / len(frames)
         print(f"{name:10} {len(frames):3} frames  {len(frames) / FPS:.2f} s  about {lit / (W * H) * 100:.1f}% of pixels lit")
-    story = a["open"] + a["listening"] * 2 + a["thinking"] * 2 + a["blink"] + a["speaking"] * 3 + a["close"] + [Image.new("1", (W, H), 0)] * 8
+    # idle is not a set of frames: the firmware holds the open eye and plays blink every 3 to 5 s at random
+    rest = a["blink"][-1]
+    idle = [rest] * 100 + a["blink"] + [rest] * 140 + a["blink"] + [rest] * 112 + a["blink"] + [rest] * 30
+    gif(idle, OUT / "idle.gif")
+    story = (a["open"] + a["listening"] * 2 + a["thinking"] * 2 + a["blink"] + a["speaking"] * 3
+             + [rest] * 95 + a["blink"] + [rest] * 40 + a["close"] + [Image.new("1", (W, H), 0)] * 8)
     gif(story, OUT / "all_in_order.gif")
     enlarge(frame(), 8).save(OUT / "eye_open.png")
     svg(OUT / "eye.svg")
+    if sys.argv[1:2] == ["header"]:
+        header(a, HERE.parent / "eye_frames.h")
 
 
 if __name__ == "__main__":
