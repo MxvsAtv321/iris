@@ -24,7 +24,7 @@ CAPTURE_S, DISPLAY_S, STREAM_FPS = 0.17, 0.05, 12.0
 app = FastAPI()
 camera = asyncio.Lock()          # the ESP32 serves one request at a time
 state = {"jpeg": b"", "shown": "", "eye": "closed", "frames": 0, "settings": {"framesize": 11, "vflip": 0, "hmirror": 1},
-         "place": {"x": 0, "y": 0, "w": 116, "h": 52}}
+         "place": {"x": 0, "y": 0, "w": 116, "h": 52, "flip_h": 0, "flip_v": 1}}
 
 
 def card():
@@ -138,7 +138,8 @@ async def clear():
 def placement():
     """Where the display draws: the offset, and the area text is fitted into (narrower once it has been moved)."""
     x, y, w, h = (state["place"][k] for k in "xywh")
-    return {"offset": {"x": x, "y": y}, "area": {"w": min(w, 128 - 2 * abs(x)), "h": min(h, 64 - 2 * abs(y))}}
+    return {"offset": {"x": x, "y": y}, "area": {"w": min(w, 128 - 2 * abs(x)), "h": min(h, 64 - 2 * abs(y))},
+            "flip": {"h": state["place"]["flip_h"], "v": state["place"]["flip_v"]}}
 
 
 @app.get("/test")
@@ -148,8 +149,10 @@ async def test():
 
 
 @app.get("/calibrate")
-async def calibrate(x: int | None = None, y: int | None = None, w: int | None = None, h: int | None = None):
-    for key, value, low, high in (("x", x, -40, 40), ("y", y, -20, 20), ("w", w, 48, 128), ("h", h, 24, 64)):
+async def calibrate(x: int | None = None, y: int | None = None, w: int | None = None, h: int | None = None,
+                    flip_h: int | None = None, flip_v: int | None = None):
+    for key, value, low, high in (("x", x, -40, 40), ("y", y, -20, 20), ("w", w, 48, 128), ("h", h, 24, 64),
+                                  ("flip_h", flip_h, 0, 1), ("flip_v", flip_v, 0, 1)):
         if value is not None:
             state["place"][key] = max(low, min(high, value))
     state.update(shown="[test pattern]", shown_at=time.time())

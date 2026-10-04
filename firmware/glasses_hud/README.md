@@ -17,7 +17,7 @@ The display on the glasses: a 128x64 one-colour OLED on a XIAO ESP32C3, seen thr
 | `/clear` | Stops everything and clears the display. |
 | `/status` | Frame rate, the time from the last call to its first frame, and where things are drawn. |
 | `/test` | A border, a crosshair, `TL` `TR` `BL` `BR` in the corners, and the area text is drawn in (dashed). |
-| `/calibrate?x=..&y=..` | Moves text and the eye by that many pixels, saved on the board. Optional `w` and `h` resize the text area. |
+| `/calibrate?x=..&y=..` | Moves text and the eye by that many pixels, saved on the board. Optional `w` and `h` resize the text area; `flip_h` and `flip_v` mirror the picture. |
 
 Details and defaults are in `docs/contracts.md`.
 
@@ -49,6 +49,7 @@ Only part of the screen may be visible through the lens. `/test` shows which: th
     curl "http://172.20.10.6/calibrate?x=10&y=-6"     # 10 right, 6 up, as the wearer reads
     curl "http://172.20.10.6/calibrate?w=100&h=44"    # optional: a smaller area, if the dashed box's edges are out of view
     curl "http://172.20.10.6/calibrate?x=0&y=0&w=116&h=52"   # back to the start
+    curl "http://172.20.10.6/calibrate?flip_h=0&flip_v=1"    # which way up: 0 or 1 each; text backwards -> the other flip_h, upside down -> the other flip_v
 
 Text is never drawn off the screen: moving the area towards an edge narrows it, and text drops a size to fit. The eye is a picture 113 pixels wide, so an offset beyond about 7 pixels sideways clips its corner.
 

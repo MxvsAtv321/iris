@@ -16,6 +16,7 @@
 //   curl http://glasses-hud.local/test                       border, crosshair, TL TR BL BR, and the content area (dashed)
 //   curl "http://glasses-hud.local/calibrate?x=10&y=-6"      +x moves right, +y moves down, as the wearer reads
 //   curl "http://glasses-hud.local/calibrate?w=100&h=44"     optional: make the content area smaller or larger
+//   curl "http://glasses-hud.local/calibrate?flip_h=0&flip_v=1"   mirror left-right or top-bottom, for the way the lens shows it
 
 #include <WiFi.h>
 #include <ESPmDNS.h>
@@ -35,10 +36,10 @@ const char* WIFI_SSID = "YOUR_HOTSPOT_NAME";
 const char* WIFI_PASS = "YOUR_HOTSPOT_PASSWORD";
 const char* HOSTNAME  = "glasses-hud";   // reachable as glasses-hud.local
 
-// Flip settings for the mirror. Find the right combo on the optics bench:
-// text reads backwards -> toggle FLIP_HORIZONTAL; upside down -> toggle FLIP_VERTICAL.
-const bool FLIP_HORIZONTAL = true;
-const bool FLIP_VERTICAL   = false;
+// How the picture is turned for the optics, until /calibrate?flip_h=..&flip_v=.. saves something else on the board.
+// Text reads backwards -> the other flip_h; upside down -> the other flip_v; both -> turned 180 degrees.
+const bool FLIP_HORIZONTAL = false;
+const bool FLIP_VERTICAL   = true;
 // ----------------------------------
 
 #define SCREEN_WIDTH  128
@@ -57,6 +58,7 @@ Preferences prefs;
 const int16_t MAX_OFF_X = 40, MAX_OFF_Y = 20;
 int16_t offX = 0, offY = 0;          // +x is right, +y is down, as the wearer reads
 int16_t areaW = 116, areaH = 52;
+bool flipH = FLIP_HORIZONTAL, flipV = FLIP_VERTICAL;
 
 // The text sizes, largest first. The same table is in brain/hud_text.py; change both together.
 struct Face {
@@ -81,7 +83,7 @@ int fitH() { return min((int)areaH, SCREEN_HEIGHT - 2 * abs(offY)); }
 // ---------- The eye: what is playing ----------
 // A request turns into a short list of steps. loop() plays one frame at a time and
 // goes back to the web server in between, so nothing here ever waits.
-enum StepKind : uint8_t { STEP_ANIM, STEP_LOOP, STEP_IDLE, STEP_TEXT, STEP_FADE_OUT };
+enum StepKind : uint8_t { STEP_ANIM, STEP_LOOP, STEP_IDLE, STEP_TEXT, STEP_DARK };
 struct Step {
   StepKind kind;
   int8_t   anim;     // index into EYE_ANIMS, for STEP_ANIM and STEP_LOOP
@@ -95,7 +97,6 @@ const uint32_t IDLE_DEFAULT_MS   = 6000;
 const uint32_t ANSWER_HOLD_MS    = 4000;
 const uint32_t NUDGE_HOLD_MS     = 5000;
 const uint32_t AFTER_ANSWER_MS   = 2800;    // the eye rests open this long after an answer, then closes
-const uint8_t  FADE_OUT_FRAMES   = 4;
 const uint8_t  MAX_STEPS         = 8;
 
 Step     steps[MAX_STEPS];
@@ -106,7 +107,6 @@ uint16_t frameAt = 0;
 bool     blinking = false;
 bool     eyeOpen = false;          // the open eye is on the display right now
 String   stepText = "";
-uint8_t  contrastNow = 0xFF;
 
 int8_t A_OPEN = -1, A_BLINK = -1, A_CLOSE = -1;
 
@@ -119,21 +119,16 @@ float    fpsLast = 0;
 
 void applyFlip() {
   // Segment remap: 0xA1 is the library default, 0xA0 mirrors left-right.
-  display.ssd1306_command(FLIP_HORIZONTAL ? 0xA0 : 0xA1);
+  display.ssd1306_command(flipH ? 0xA0 : 0xA1);
   // COM scan direction: 0xC8 is the library default, 0xC0 flips top-bottom.
-  display.ssd1306_command(FLIP_VERTICAL ? 0xC0 : 0xC8);
+  display.ssd1306_command(flipV ? 0xC0 : 0xC8);
 }
 
-void setContrast(uint8_t c) {
-  if (c == contrastNow) return;
+// The display is always at full brightness: thin lines seen through a half-mirror need all of it. Sent again
+// before every picture (two bytes), so a display that lost the setting gets it back with the next frame.
+void fullBrightness() {
   display.ssd1306_command(SSD1306_SETCONTRAST);
-  display.ssd1306_command(c);
-  contrastNow = c;
-}
-
-void setMaxBrightness() {
-  contrastNow = 0;
-  setContrast(0xFF);
+  display.ssd1306_command(0xFF);
 }
 
 int8_t animIndex(const String& name) {
@@ -197,6 +192,7 @@ void drawFrame(uint16_t index) {
     }
   }
   shiftBuffer(offX, offY);
+  fullBrightness();
   display.display();
   noteFrame(t0);
 }
@@ -312,6 +308,7 @@ void showText(const String& raw) {
     drawn = true;
   }
   if (!drawn) showSmall(text);
+  fullBrightness();
   display.display();
 }
 
@@ -356,6 +353,7 @@ void drawTest() {
   String label = "x" + signedNumber(offX) + " y" + signedNumber(offY);
   display.setCursor((SCREEN_WIDTH - (int)label.length() * 6) / 2 + offX, SCREEN_HEIGHT / 2 + 10 + offY);
   display.print(label);
+  fullBrightness();
   display.display();
 }
 
@@ -380,9 +378,9 @@ void planStart() {
 }
 
 // Every plan that shows the eye ends with it closing and the display going dark.
-void planCloseAndFade() {
+void planCloseAndDark() {
   planAdd(STEP_ANIM, A_CLOSE, 0);
-  planAdd(STEP_FADE_OUT, -1, 0);
+  planAdd(STEP_DARK, -1, 0);
 }
 
 void nextStep() {
@@ -403,14 +401,12 @@ void tickEye() {
     frameAt = 0;
     blinking = false;
     if (s.kind == STEP_IDLE) {
-      setContrast(0xFF);
       drawFrame(EYE_ANIMS[A_OPEN].first + EYE_ANIMS[A_OPEN].count - 1);
       eyeOpen = true;
       nextBlinkAt = now + random(3000, 5001);   // a natural blink every 3 to 5 seconds
       return;
     }
     if (s.kind == STEP_TEXT) {
-      setContrast(0xFF);
       showText(stepText);
       eyeOpen = false;
       if (s.ms == 0) nextStep();                 // the text stays; nothing more to do
@@ -423,11 +419,6 @@ void tickEye() {
       const EyeAnim& a = EYE_ANIMS[s.anim];
       uint16_t last = a.count - 1;
       uint16_t idx = frameAt > last ? last : frameAt;
-      if (s.anim == A_OPEN) {
-        setContrast(24 + (uint16_t)(231) * idx / last);   // fade in gently as the lids part
-      } else {
-        setContrast(0xFF);
-      }
       drawFrame(a.first + idx);
       if (idx == last) {
         eyeOpen = (s.anim != A_CLOSE);
@@ -439,7 +430,6 @@ void tickEye() {
     }
     case STEP_LOOP: {
       const EyeAnim& a = EYE_ANIMS[s.anim];
-      setContrast(0xFF);
       drawFrame(a.first + frameAt);
       frameAt = (frameAt + 1) % a.count;
       if (now - stepStarted >= s.ms) nextStep();
@@ -464,20 +454,12 @@ void tickEye() {
     case STEP_TEXT:
       if (now - stepStarted >= s.ms) nextStep();
       break;
-    case STEP_FADE_OUT: {
-      // out quickly: a few steps down, then dark
-      if (frameAt < FADE_OUT_FRAMES) {
-        setContrast(200 - (uint16_t)190 * frameAt / (FADE_OUT_FRAMES - 1));
-        frameAt++;
-      } else {
-        display.clearDisplay();
-        display.display();
-        setContrast(0xFF);
-        eyeOpen = false;
-        nextStep();
-      }
+    case STEP_DARK:
+      display.clearDisplay();
+      display.display();
+      eyeOpen = false;
+      nextStep();
       break;
-    }
   }
 }
 
@@ -488,7 +470,7 @@ const char* stateName() {
     case STEP_LOOP:     return EYE_ANIMS[steps[stepAt].anim].name;
     case STEP_IDLE:     return "idle";
     case STEP_TEXT:     return "text";
-    case STEP_FADE_OUT: return "fading";
+    case STEP_DARK:     return "dark";
   }
   return "dark";
 }
@@ -522,15 +504,14 @@ void handleShow() {
     planAdd(STEP_ANIM, A_BLINK, 0);
     planAdd(STEP_TEXT, -1, argMs("hold", nudge ? NUDGE_HOLD_MS : ANSWER_HOLD_MS));
     if (nudge) {
-      planAdd(STEP_FADE_OUT, -1, 0);
+      planAdd(STEP_DARK, -1, 0);
     } else {
       planAdd(STEP_ANIM, A_OPEN, 0, 2);
       planAdd(STEP_IDLE, -1, AFTER_ANSWER_MS);
-      planCloseAndFade();
+      planCloseAndDark();
     }
     planStart();
   } else {
-    setContrast(0xFF);
     showText(msg);          // as before: the text stays until it is replaced or cleared
     eyeOpen = false;
   }
@@ -541,7 +522,6 @@ void handleClear() {
   planClear();
   display.clearDisplay();
   display.display();
-  setContrast(0xFF);
   eyeOpen = false;
   sendOk();
 }
@@ -567,7 +547,7 @@ void handleEye() {
   planClear();
   if (name == "close") {
     if (eyeOpen) planAdd(STEP_ANIM, A_CLOSE, 0);
-    planAdd(STEP_FADE_OUT, -1, 0);
+    planAdd(STEP_DARK, -1, 0);
   } else {
     if (!eyeOpen) planAdd(STEP_ANIM, A_OPEN, 0);
     if (name == "blink") {
@@ -579,7 +559,7 @@ void handleEye() {
     } else {
       planAdd(STEP_LOOP, anim, argMs("for", LOOP_DEFAULT_MS));
     }
-    planCloseAndFade();
+    planCloseAndDark();
   }
   planStart();
   sendOk();
@@ -587,18 +567,19 @@ void handleEye() {
 
 String placementJson() {
   return "\"offset\":{\"x\":" + String(offX) + ",\"y\":" + String(offY) + "}"
-         ",\"area\":{\"w\":" + String(fitW()) + ",\"h\":" + String(fitH()) + "}";
+         ",\"area\":{\"w\":" + String(fitW()) + ",\"h\":" + String(fitH()) + "}"
+         ",\"flip\":{\"h\":" + String(flipH ? 1 : 0) + ",\"v\":" + String(flipV ? 1 : 0) + "}";
 }
 
 void handleTest() {
   planClear();
-  setContrast(0xFF);
   drawTest();
   eyeOpen = false;
   sendOk();
 }
 
-// /calibrate?x=..&y=..  moves text and the eye; optional w= and h= resize the content area. Saved on the board.
+// /calibrate?x=..&y=..  moves text and the eye; optional w= and h= resize the content area, and flip_h= and
+// flip_v= (0 or 1) mirror the picture left-right and top-bottom. Saved on the board.
 // Without arguments it changes nothing. Either way it draws the test pattern and answers with where things are.
 void handleCalibrate() {
   bool changed = false;
@@ -606,14 +587,18 @@ void handleCalibrate() {
   if (server.hasArg("y")) { offY = constrain((int)server.arg("y").toInt(), -MAX_OFF_Y, MAX_OFF_Y); changed = true; }
   if (server.hasArg("w")) { areaW = constrain((int)server.arg("w").toInt(), 48, SCREEN_WIDTH); changed = true; }
   if (server.hasArg("h")) { areaH = constrain((int)server.arg("h").toInt(), 24, SCREEN_HEIGHT); changed = true; }
+  if (server.hasArg("flip_h")) { flipH = server.arg("flip_h").toInt() != 0; changed = true; }
+  if (server.hasArg("flip_v")) { flipV = server.arg("flip_v").toInt() != 0; changed = true; }
   if (changed) {
+    prefs.putBool("fh", flipH);
+    prefs.putBool("fv", flipV);
+    applyFlip();              // the left-right flip shows with the next picture, which drawTest sends below
     prefs.putShort("ox", offX);
     prefs.putShort("oy", offY);
     prefs.putShort("aw", areaW);
     prefs.putShort("ah", areaH);
   }
   planClear();
-  setContrast(0xFF);
   drawTest();
   eyeOpen = false;
   server.sendHeader("Access-Control-Allow-Origin", "*");
@@ -643,10 +628,10 @@ void setup() {
     Serial.println("OLED not found. Check wiring and address 0x3C.");
     while (true) delay(1000);
   }
-  applyFlip();
-  setMaxBrightness();
-
   prefs.begin("hud", false);
+  flipH = prefs.getBool("fh", FLIP_HORIZONTAL);
+  flipV = prefs.getBool("fv", FLIP_VERTICAL);
+  applyFlip();
   offX  = constrain((int)prefs.getShort("ox", 0), -MAX_OFF_X, MAX_OFF_X);
   offY  = constrain((int)prefs.getShort("oy", 0), -MAX_OFF_Y, MAX_OFF_Y);
   areaW = constrain((int)prefs.getShort("aw", 116), 48, SCREEN_WIDTH);
