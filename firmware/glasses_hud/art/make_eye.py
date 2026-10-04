@@ -75,7 +75,7 @@ def shapes(openness=1.0, pupil=PUPIL_R, iris=IRIS_R, turn=0.0, ripple=0.0, phase
     iris_paths = []
     if openness > 0.04:
         lid_paths.append([(x, lid_y(x, lo)) for x in xs])
-    if openness > 0.22:      # through a narrower slit the iris is only fragments
+    if openness > 0.32:      # through a narrower slit the iris is only fragments
         # a second, shorter arc just above the upper lid gives it weight that tapers to the corners
         lash = [x for x in xs if abs(x - CX) < HALF_W * 0.55 * openness]
         if len(lash) > 2:
