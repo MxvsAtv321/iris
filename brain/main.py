@@ -509,7 +509,7 @@ async def ask(q: AskIn):
     latencies.append((latency_ms, first_ms))
     g.hold(speak or display)
     note(s["said"], speak or display)
-    if display != FALLBACK:
+    if display != FALLBACK and mode != "recall":   # an answer about the past is not a new sighting of the thing
         bg(remember_ask(sid, shot, question, speak or display))
     save_state()
     log.info("ask %s mode=%s %s total=%dms sources=%s", ask_id, mode, timings, latency_ms, sources)
