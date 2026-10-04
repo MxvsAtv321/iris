@@ -42,6 +42,14 @@ export function stripWakeWord(text: string): string | null {
   return match ? text.trim().slice(match[0].length).trim() : null
 }
 
+// The wake word was heard: the eye on the glasses opens and listens. Fire and forget, never throws.
+export function wakeEye(session_id: string): void {
+  void fetch('/api/wake', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id }), signal: AbortSignal.timeout(2000),
+  }).catch(() => {})
+}
+
 export async function startSession(session_id: string, signal?: AbortSignal): Promise<boolean> {
   const controller = new AbortController()
   const abort = () => controller.abort()
