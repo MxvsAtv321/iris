@@ -9,8 +9,12 @@ Everyone builds against these shapes. The owner may change their contract: updat
 | `GET http://172.20.10.4/capture` | One JPEG from the glasses camera (about 0.2 s at 800x600). |
 | `GET http://172.20.10.4/control?var=<name>&val=<n>` | Changes one camera setting until the camera restarts. The brain sends `framesize` 11 (800x600), `vflip` 0 and `hmirror` 1 at startup and at every session start, from `CAMERA_FRAMESIZE`, `CAMERA_VFLIP` and `CAMERA_HMIRROR`. |
 | `GET http://172.20.10.4/status` | The camera's current settings as JSON. |
-| `GET http://172.20.10.6/show?text=<url-encoded text>` | Shows the text on the glasses display. Under 40 characters stays in the large font. Returns `ok`. |
-| `GET http://172.20.10.6/clear` | Clears the display. Returns `ok`. |
+| `GET http://172.20.10.6/show?text=<url-encoded text>` | Shows the text on the glasses display. Under 40 characters stays in the large font. Returns `ok`. The text stays until it is replaced or cleared. |
+| `GET http://172.20.10.6/show?text=...&eye=answer&hold=<ms>` | The eye blinks, the text shows for `hold` ms (default 4000), then the eye rests open for about 3 s and closes. The eye opens first if it is shut. |
+| `GET http://172.20.10.6/show?text=...&eye=nudge&hold=<ms>` | The eye flicks open and blinks, the text shows for `hold` ms (default 5000), then the display goes dark. |
+| `GET http://172.20.10.6/eye?anim=<name>` | Plays an eye animation at about 30 frames a second: `open`, `listening`, `thinking`, `speaking`, `idle`, `blink`, `close`. The eye opens first if it is shut. `listening`, `thinking` and `speaking` loop until the next call, and close by themselves after 15 s (`&for=<ms>` changes that). `idle` holds the eye open with a blink every 3 to 5 s. Returns `ok`, or 400 for an unknown name. |
+| `GET http://172.20.10.6/clear` | Stops any animation and clears the display. Returns `ok`. |
+| `GET http://172.20.10.6/status` | JSON: `state`, `eye_open`, `fps`, `draw_ms`, `cmd_to_first_frame_ms`. |
 
 Use the IPs, never the `.local` names (about 5 s slower per request on macOS).
 
@@ -40,6 +44,12 @@ Response:
 ### `POST /api/session`, `DELETE /api/session`
 
 `POST { "session_id": "judge-01" }` makes that session active and starts the watch loop; returns `{ "session_id", "earlier" }` (how many descriptions were carried over from the previous session). `DELETE` stops the loop. Cooldowns reset per session, so every judge gets the nudge.
+
+### `POST /api/wake`
+
+`POST { "session_id": "judge-01" }` when the phone hears the wake word "Iris". The eye on the glasses opens and listens, and the watch loop holds its nudges for 10 s. Returns `{ "eye": true, "display_ms": 48 }`: whether the display answered, and how long the brain waited for it (at most 1 s). The phone does not need to wait for the reply.
+
+During `/api/ask` the brain drives the eye itself: it thinks while the model works, then blinks and shows the answer. A nudge from the watch loop arrives as a quick blink, then the text.
 
 ### `GET /api/live?q=...`
 
