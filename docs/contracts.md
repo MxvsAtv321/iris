@@ -246,6 +246,8 @@ moment_id = save_moment(session_id, captured_at, image_jpeg_bytes, description)
 
 `save_moment(session_id, captured_at, image_jpeg_bytes, description) -> int | None` returns the new moment's id, or `None` when the frame was skipped as a near-duplicate of the last one or memory was unreachable. It never raises and gives up after 8 s. `captured_at` can be a datetime, a Unix time, or an ISO string. Descriptions should name visible objects plainly first ("phone, keys, laptop"), then one sentence about the scene. For async code, `save_moment_async` takes the same arguments.
 
+A frame is a duplicate when it looks like the session's last saved moment and reads like it. `save_moment` sends a 64-bit difference hash of the photo, and memory compares it with the last moment's: the same picture (6 bits or fewer apart) with similar words (description similarity above 0.80) is skipped, and so is a slightly moved view (14 bits or fewer) with near-identical words (above `DEDUPE_THRESHOLD`). A different scene described the same way is kept, and so is a question asked about the scene just saved. When no hash is sent, the descriptions alone decide, as before.
+
 ### POST /api/memory/search (on the brain)
 
 For the phone page and dashboard, through the team tunnel.
@@ -274,7 +276,7 @@ Under `${MEMORY_URL}/api/memory`. Reads are scoped to one judge's session, from 
 
 | Route | Who calls it | What it does |
 | --- | --- | --- |
-| `POST /ingest` | brain, through `save_moment` | Saves a frame. Raw JPEG body. Headers `Authorization: Bearer <INGEST_TOKEN>`, `X-Session-Id`, `X-Captured-At` (ISO 8601), `X-Description` (URI-encoded). Returns `{ "saved": true, "id": 42, "description": "...", "ms": 310 }`, or `saved: false` and `id: null` for a near-duplicate. |
+| `POST /ingest` | brain, through `save_moment` | Saves a frame. Raw JPEG body. Headers `Authorization: Bearer <INGEST_TOKEN>`, `X-Session-Id`, `X-Captured-At` (ISO 8601), `X-Description` (URI-encoded), and `X-Image-Hash` (16 hex characters; `save_moment` adds it). Returns `{ "saved": true, "id": 42, "skipped": null, "description": "...", "ms": 310 }`. For a duplicate of the session's last moment, `saved` is false, `id` is null and `skipped` says why: `same_image`, `same_scene` or `same_description`. |
 | `POST /search` | brain router, garden | `{ "session_id", "question", "target"? }`. Without `target`, the object is picked out of the question's words, with no model call. Returns `{ "search_id", "target", "moment", "top", "ms" }`, where `moment` is the match or `null` and `top` is the five closest by meaning. |
 | `GET /moments?session_id=&limit=` | garden | Every moment in the session, oldest first |
 | `GET /moments/:id/image?session_id=` | garden, phone page | The JPEG, served from the `uploads` bucket |

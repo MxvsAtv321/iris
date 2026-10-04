@@ -34,6 +34,10 @@ BEGIN
   END IF;
 END $$;
 
+-- A 64-bit difference hash of the photo, 16 hex characters, sent by the brain. NULL for moments saved
+-- before it existed, or by a client without Pillow. Dedupe compares it with the last moment's.
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS image_hash text;
+
 CREATE INDEX IF NOT EXISTS memories_session_time ON memories (session_id, captured_at DESC);
 CREATE INDEX IF NOT EXISTS memories_tsv ON memories USING gin (search_tsv);
 
@@ -85,6 +89,74 @@ BEGIN
   RETURNING memories.id INTO v_id;
 
   RETURN v_id;
+END;
+$$;
+
+
+-- ------------------------------------------------------------------
+-- save_memory_if_new
+-- insert_memory_if_new, but a duplicate has to look the same as well as read the same. It
+-- compares the new frame with the session's last saved moment:
+--   picture the same (hash within p_same_bits) and words similar (above p_same_words): skipped, 'same_image'
+--   picture close (within p_near_bits) and words near-identical (above p_threshold):   skipped, 'same_scene'
+--   either hash missing: words alone, as before:                                        skipped, 'same_description'
+-- So a new scene that happens to be described the same way is kept, and so is a question asked
+-- about the scene just saved (same picture, different words). Returns the new id, or NULL and why.
+-- The memory function calls this one. insert_memory_if_new stays for a function deployed before it.
+-- ------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION save_memory_if_new(
+  p_session_id  text,
+  p_image_key   text,
+  p_description text,
+  p_embedding   vector(1536),
+  p_threshold   float8      DEFAULT 0.95,
+  p_captured_at timestamptz DEFAULT NULL,
+  p_image_hash  text        DEFAULT NULL,
+  p_same_bits   int         DEFAULT 6,
+  p_near_bits   int         DEFAULT 14,
+  p_same_words  float8      DEFAULT 0.80
+)
+RETURNS TABLE (id bigint, skipped text)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_last      vector(1536);
+  v_last_hash text;
+  v_words     float8;
+  v_bits      int;
+  v_id        bigint;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext(p_session_id));
+
+  SELECT m.embedding, m.image_hash INTO v_last, v_last_hash
+  FROM memories m
+  WHERE m.session_id = p_session_id
+  ORDER BY m.captured_at DESC
+  LIMIT 1;
+
+  IF v_last IS NOT NULL THEN
+    v_words := 1 - (v_last <=> p_embedding);
+    IF p_image_hash ~ '^[0-9a-f]{16}$' AND v_last_hash ~ '^[0-9a-f]{16}$' THEN
+      v_bits := bit_count(('x' || p_image_hash)::bit(64) # ('x' || v_last_hash)::bit(64));
+      IF v_bits <= p_same_bits AND v_words > p_same_words THEN
+        RETURN QUERY SELECT NULL::bigint, 'same_image'::text;
+        RETURN;
+      ELSIF v_bits <= p_near_bits AND v_words > p_threshold THEN
+        RETURN QUERY SELECT NULL::bigint, 'same_scene'::text;
+        RETURN;
+      END IF;
+    ELSIF v_words > p_threshold THEN
+      RETURN QUERY SELECT NULL::bigint, 'same_description'::text;
+      RETURN;
+    END IF;
+  END IF;
+
+  INSERT INTO memories (session_id, captured_at, image_key, description, embedding, image_hash)
+  VALUES (p_session_id, COALESCE(p_captured_at, now()), p_image_key, p_description, p_embedding,
+          CASE WHEN p_image_hash ~ '^[0-9a-f]{16}$' THEN p_image_hash END)
+  RETURNING memories.id INTO v_id;
+
+  RETURN QUERY SELECT v_id, NULL::text;
 END;
 $$;
 

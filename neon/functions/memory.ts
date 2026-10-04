@@ -216,6 +216,12 @@ function requestOrigin(url: string): string {
   return new URL(url).origin;
 }
 
+/** The brain's difference hash of the photo: 16 lowercase hex characters. Anything else is treated as not sent. */
+export function imageHash(header: string | undefined): string | null {
+  const hash = header?.trim().toLowerCase();
+  return hash && /^[0-9a-f]{16}$/.test(hash) ? hash : null;
+}
+
 /** Moment ids are whole numbers. Anything else can't exist, so it's a 404, not a failed database query. */
 function isMomentId(id: string): boolean {
   return /^\d{1,15}$/.test(id);
@@ -285,19 +291,23 @@ app.post("/ingest", async (c) => {
     const description = given ? decodeURIComponent(given) : await describe(jpeg);
     const embedding = await embed(description, INGEST_EMBED_TIMEOUT_MS);
 
-    // Dedupe and insert happen atomically inside Postgres. The photo is uploaded
+    // Dedupe and insert happen atomically inside Postgres. A duplicate has to look like the last
+    // moment (the image hash) as well as read like it, so a new scene described the same way is
+    // kept. Without a hash the descriptions alone decide, as they used to. The photo is uploaded
     // inside the same transaction, so a moment only becomes visible once its
     // photo is stored, and a failed upload leaves no broken moment behind.
     const imageKey = `moments/${randomUUID()}.jpg`;
     let id: number | null = null;
+    let skipped: string | null = null;
     const db = await pool.connect();
     try {
       await db.query("BEGIN");
-      const { rows } = await db.query<{ id: number | null }>(
-        "SELECT insert_memory_if_new($1, $2, $3, $4::vector, $5, $6) AS id",
-        [sessionId, imageKey, description, JSON.stringify(embedding), DEDUPE_THRESHOLD, capturedAt],
+      const { rows } = await db.query<{ id: number | null; skipped: string | null }>(
+        "SELECT id, skipped FROM save_memory_if_new($1, $2, $3, $4::vector, $5, $6, $7)",
+        [sessionId, imageKey, description, JSON.stringify(embedding), DEDUPE_THRESHOLD, capturedAt, imageHash(c.req.header("x-image-hash"))],
       );
       id = rows[0]?.id ?? null;
+      skipped = rows[0]?.skipped ?? null;
       if (id !== null) await putObject(imageKey, jpeg, "image/jpeg");
       await db.query("COMMIT");
     } catch (err) {
@@ -306,7 +316,7 @@ app.post("/ingest", async (c) => {
     } finally {
       db.release();
     }
-    return c.json({ saved: id !== null, id, description, ms: Date.now() - started });
+    return c.json({ saved: id !== null, id, skipped, description, ms: Date.now() - started });
   } catch (err) {
     console.error("[ingest]", err);
     return c.json({ error: String(err) }, 502);
