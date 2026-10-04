@@ -254,7 +254,7 @@ async def decision(sid, fid, level, reason, box, text="", speak="", trace=None):
 
 # Every decision's trace has all of these keys; a frame the model never judged keeps the blanks.
 BLANK_TRACE = dict(frame_url=None, looked=False, skipped=None, change=None, saw="", why="", topic="", model=None,
-                   candidate={"text": "", "say": ""}, urgency=None, display_at=gate.DISPLAY_AT, speak_at=gate.SPEAK_AT,
+                   candidate={"text": "", "say": ""}, said_before="", urgency=None, display_at=gate.DISPLAY_AT, speak_at=gate.SPEAK_AT,
                    proposed="silent", rules=[], blocked_by=None, latency_ms={})
 
 
@@ -305,7 +305,8 @@ async def tick(sid, fid, trace):
     level, reason, judged = gates[sid].explain(w)
     lat["gate"] = round((time.perf_counter() - t_gate) * 1000, 3)
     trace.update(judged, saw=str(w.get("description") or ""), why=str(w.get("reason") or "")[:100],
-                 topic=str(w.get("topic") or ""), candidate={"text": line, "say": say})
+                 topic=str(w.get("topic") or ""), candidate={"text": line, "say": say},
+                 said_before=gate.said_before(w.get("said_before"), s["said"], judged["proposed"] != "silent"))
     if model != llm.WATCH:
         reason += f" [via {model}]"
     if w.get("description"):

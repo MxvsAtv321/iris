@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { IrisEvent } from '../api'
-import { EMPTY, lullLine, parseSnapshot, reduce, thoughts, verdict, type Decision, type Lull, type Trace } from './mind'
+import { EMPTY, heldBack, lullLine, parseSnapshot, reduce, thoughts, verdict, type Decision, type Lull, type Trace } from './mind'
 
 const at = (s: number) => new Date(Date.UTC(2026, 9, 4, 0, 0, s)).toISOString()
 function decision(n: number, level: 'silent' | 'display' | 'speak', trace: Partial<Trace> = {}, session = 'judge-01') {
@@ -53,7 +53,13 @@ describe('the thought stream', () => {
     const blocked = decision(1, 'silent', { ...looked, urgency: 9, blocked_by: 'cooldown', candidate: { text: 'Line 2: 7x8 is 56', say: 'Line 2 should be fifty-six.' },
       rules: [{ rule: 'cooldown', outcome: 'blocked', detail: "nudged about 'math' 10 s ago; one per 120 s" }] })
     const v = verdict(load([blocked]).events[0] as Decision)
-    expect(v).toEqual({ did: 'Stayed silent', because: "Cooldown: nudged about 'math' 10 s ago; one per 120 s.", heldBack: 'Line 2 should be fifty-six.', said: '' })
+    expect(v).toEqual({ did: 'Stayed silent', because: "Cooldown: nudged about 'math' 10 s ago; one per 120 s.", heldBack: 'Line 2 should be fifty-six.', said: '', saidBefore: '' })
+  })
+  it('says so when the model itself chose not to repeat a line', () => {
+    const quiet = load([decision(1, 'silent', { ...looked, urgency: 0, said_before: 'Line 2 should be fifty-six.' })]).events[0] as Decision
+    expect(verdict(quiet)).toMatchObject({ did: 'Stayed silent', because: 'Already said: Iris chose not to repeat itself.', saidBefore: 'Line 2 should be fifty-six.' })
+    expect(heldBack(quiet)).toBe(true)
+    expect(heldBack(load([decision(1, 'silent', looked)]).events[0] as Decision)).toBe(false)
   })
   it('says an ordinary moment was simply under the bar', () => {
     const v = verdict(load([decision(1, 'silent', { ...looked, display_at: 5 })]).events[0] as Decision)

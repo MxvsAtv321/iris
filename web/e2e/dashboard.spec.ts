@@ -75,6 +75,7 @@ test('a held-back moment reads as saw, considered, decided, with the rule named'
   await expect(page.locator('.mind-numbers')).toContainText('measured on 10 test photos')
   await expect(page.locator('.mind-timeline .tl-speak')).toHaveCount(1)
   await expect(page.locator('.mind-timeline .tl-held')).toHaveCount(1)
+  await expect(page.getByText('held back', { exact: false }).last()).toBeVisible()
   await expect(page.locator('.mind-frame')).toHaveAttribute('data-looking', 'true')
   expect(await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight)).toBe(true)
   await page.screenshot({ path: 'test-results/dashboard-held-back.png', animations: 'disabled' })
@@ -103,6 +104,24 @@ test('a spoken moment arrives over the socket, and the timeline goes back to it'
   await page.getByRole('button', { name: 'Back to now' }).click()
   await expect(page.getByText('Looking back at')).toHaveCount(0)
   await expect(page.getByText('Seeing now')).toBeVisible({ timeout: 12000 })
+})
+
+test('when the model itself declines to repeat a line, the dashboard says so as plainly as a rule', async ({ page }) => {
+  const earlier = session().slice(0, 45)   // up to and including the moment it spoke
+  const again = decision(0, 'silent', { ...board, why: 'The incorrect multiplication was already reported.', urgency: 0, proposed: 'silent', candidate: { text: '', say: '' },
+    said_before: board.candidate.say, rules: rules().map(r => ({ ...r, outcome: 'not_checked', detail: '' })), latency_ms: { capture: 150, model: 2100, gate: 0.01, total: 2260 } },
+    { reason: 'urgency 0: The incorrect multiplication was already reported.' })
+  expect(earlier.at(-1)).toMatchObject({ level: 'speak' })
+  await brain(page, { session_id: 'judge-01', events: [...earlier, again], metrics })
+  await page.goto('/dashboard')
+  const moment = page.locator('.mind-moment[data-expanded=true]')
+  await expect(moment).toHaveAttribute('data-blocked', 'true')
+  await expect(moment.locator('.mind-rules li')).toHaveText([/Already said\s*the model chose silence itself, before any rule was needed/])
+  await expect(moment.locator('.mind-decided')).toContainText('Stayed silent. Already said: Iris chose not to repeat itself.')
+  await expect(moment.locator('.mind-decided')).toContainText('What it said earlier: Line 2 says seven times eight is fifty-four. It is fifty-six.')
+  await expect(page.locator('.mind-timeline .tl-held')).toHaveCount(1)
+  await expect(page.locator('.mind-timeline .tl-speak')).toHaveCount(1)
+  await page.screenshot({ path: 'test-results/dashboard-already-said.png', animations: 'disabled' })
 })
 
 test('dashboard stays calm with no session and with no brain', async ({ page }) => {
