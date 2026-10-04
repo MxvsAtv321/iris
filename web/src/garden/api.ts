@@ -57,8 +57,12 @@ async function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// Memory lists a session oldest first and stops at 500 unless asked for more. A long session has more than
+// that, and the newest moments, the ones a search usually finds, are the ones left out. Ask for all it will give.
+const MOMENTS_LIMIT = 2000;
+
 export async function listMoments(sessionId: string): Promise<Moment[]> {
-  const res = await ask(sessionId, `${BASE}/moments?session_id=${encodeURIComponent(sessionId)}`);
+  const res = await ask(sessionId, `${BASE}/moments?session_id=${encodeURIComponent(sessionId)}&limit=${MOMENTS_LIMIT}`);
   return (await json<{ moments: Moment[] }>(res)).moments;
 }
 

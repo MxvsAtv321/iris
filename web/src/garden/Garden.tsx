@@ -118,6 +118,7 @@ export function Garden() {
   const openTimer = useRef<number | undefined>(undefined);
   const momentsRef = useRef<Moment[]>([]);
   momentsRef.current = moments;
+  const foundMoments = useRef<Moment[]>([]); // moments a search found that the list didn't hold
   const canopyRef = useRef(canopy);
   canopyRef.current = canopy;
 
@@ -134,7 +135,9 @@ export function Garden() {
   const refresh = useCallback(async () => {
     if (!useMemory || !sessionId) return;
     try {
-      setMoments(await listMoments(sessionId));
+      const listed = await listMoments(sessionId);
+      const have = new Set(listed.map((m) => m.id));
+      setMoments([...listed, ...foundMoments.current.filter((m) => !have.has(m.id))]);
     } catch {
       /* try again on the next poll */
     }
@@ -174,17 +177,22 @@ export function Garden() {
     setStatus(null);
   }, []);
 
-  /** A search found something, from here or from the glasses. Fly to its blossom, then step inside. */
+  /** A search found something, from here or from the glasses. Fly to its blossom, then step inside.
+   *  found: the moment itself when the search returned it, so it can be shown even if the list doesn't hold it. */
   const showFound = useCallback(
-    async (momentId: number | null, target: string) => {
+    async (momentId: number | null, target: string, found: Moment | null = null) => {
       window.clearTimeout(openTimer.current);
       if (momentId === null) {
         setFoundId(null);
         setStatus(`Nothing in memory looks like ${target} yet.`);
         return;
       }
-      if (useMemory && !byId(momentId)) await refresh();
-      const m = byId(momentId);
+      if (useMemory && !byId(momentId) && !found) await refresh();
+      const m = byId(momentId) ?? (found?.id === momentId ? found : null);
+      if (m && !byId(momentId)) {
+        foundMoments.current = [...foundMoments.current.filter((x) => x.id !== m.id), m];
+        setMoments((all) => (all.some((x) => x.id === m.id) ? all : [...all, m])); // it grows a blossom to fly to
+      }
       const leaf = canopyRef.current.leaves.find((l) => l.momentId === momentId);
 
       closeMoment();
@@ -241,7 +249,7 @@ export function Garden() {
       } else {
         const r = await search(sessionId, q.trim());
         lastSearchId.current = r.search_id ?? lastSearchId.current; // the poll shouldn't replay our own question
-        await showFound(r.moment?.id ?? null, r.target);
+        await showFound(r.moment?.id ?? null, r.target, r.moment);
         if (r.moment) tie(r.moment.id, r.top.map((m) => m.id));
       }
       setQuestion("");
@@ -413,6 +421,7 @@ export function Garden() {
 
           {selectedLeaf && !open && (
             <section className="moment-card" aria-live="polite">
+              {selected && <img className="photo" src={selected.image_url} alt="" />}
               <p className="when">Seen {timeAgo(new Date(selectedLeaf.at).toISOString())}</p>
               <p className="what">{selectedLeaf.line}</p>
               <div className="actions">
@@ -422,7 +431,19 @@ export function Garden() {
             </section>
           )}
 
-          {openId && (
+          {/* The 3D scene can take a while to build. Until it is ready, the photo and what was seen are already here. */}
+          {open && !depthUrl && (
+            <section className="moment-card" aria-live="polite">
+              <img className="photo" src={open.image_url} alt="" />
+              <p className="when">Seen {timeAgo(open.captured_at)}</p>
+              <p className="what">{open.description}</p>
+              <div className="actions">
+                <button onClick={closeMoment}>Back to the garden</button>
+              </div>
+            </section>
+          )}
+
+          {openId && !(open && !depthUrl) && (
             <div className="open-bar">
               <button onClick={closeMoment}>Back to the garden</button>
             </div>
