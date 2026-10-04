@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from 'react'
 import { SafeBoundary } from './garden/SafeBoundary'
 const Garden = lazy(() => import('./garden/Garden').then(module => ({ default: module.Garden })))
-import { ask, startSession, stripWakeWord, type Answer } from './api'
+import { ask, startSession, stripWakeWord, wakeEye, type Answer } from './api'
 import { useFeed } from './useFeed'
 import { Dashboard } from './dashboard/Dashboard'
 import { speechRecognition, type Recognition } from './voice'
@@ -144,11 +144,14 @@ function Phone({ session, demo, sessionOnline, menu, settingsOpen, onSettings }:
     mic.lang = 'en-US'; mic.continuous = false; mic.interimResults = true
     let finalText = ''
     let failed = false
+    let woke = false
     mic.onresult = event => {
       let text = ''
       for (let i = 0; i < event.results.length; i++) text += event.results[i][0].transcript
       if (alive.current) setQuestion(text)
       finalText = text
+      // The moment "Iris" is recognised, before the question is finished, the eye on the glasses opens.
+      if (!woke && !demo && stripWakeWord(text) !== null) { woke = true; wakeEye(session) }
     }
     mic.onerror = event => {
       failed = true

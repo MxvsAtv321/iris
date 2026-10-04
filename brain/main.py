@@ -176,14 +176,43 @@ async def grab():
         return b""
 
 
-async def show(text):
-    """Put one line on the glasses. Returns False when the display doesn't answer."""
-    try:
-        await http.get(HUD + "/show", params={"text": (text or "")[:40]}, timeout=1)
-        return True
-    except Exception as e:  # noqa: BLE001
-        log.warning("display: %s", e)
-        return False
+hud_lock = asyncio.Lock()      # display calls go out one at a time, in the order they were made
+hud_calls = count(1)
+hud_latest = 0
+
+
+async def hud(path, params, replaceable=False):
+    """One call to the display: 1 s timeout, never raises. -> True if the display answered.
+    replaceable: skip it if a newer display call was made while this one waited (a late
+    "thinking" must not land on top of the answer)."""
+    global hud_latest
+    n = hud_latest = next(hud_calls)
+    async with hud_lock:
+        if replaceable and hud_latest != n:
+            return False
+        try:
+            r = await http.get(HUD + path, params=params, timeout=1)
+            return r.status_code == 200
+        except Exception as e:  # noqa: BLE001
+            log.warning("display %s: %s", path, e)
+            return False
+
+
+async def show(text, eye=""):
+    """Put one line on the glasses. Returns False when the display doesn't answer.
+    eye="answer": the eye blinks, the text shows, then the eye rests open and closes.
+    eye="nudge": the eye flicks open and blinks, the text shows, then the display goes dark.
+    Without eye the text stays until it is replaced."""
+    line = (text or "")[:40]
+    params = {"text": line}
+    if eye:
+        params.update(eye=eye, hold=min(7000, 3000 + 70 * len(line)))   # longer lines stay up longer
+    return await hud("/show", params)
+
+
+async def eye(anim):
+    """Play an eye animation: listening, thinking, speaking, idle, blink or close. The eye opens first if it is shut."""
+    return await hud("/eye", {"anim": anim}, replaceable=True)
 
 
 try:
@@ -283,7 +312,7 @@ async def tick(sid, fid, trace):
         note(s["descriptions"], str(w["description"]))
         bg(remember(sid, jpeg, str(w["description"])))
     if level != "silent":
-        bg(show(line or say))
+        bg(show(line or say, eye="nudge"))
         note(s["said"], say or line)
     save_state()
     lat["total"] = ms(t0)
@@ -394,6 +423,17 @@ async def stop_session():
     return {"session_id": None}
 
 
+@app.post("/api/wake")
+async def wake(body: SessionIn):
+    """The phone heard "Iris": the eye opens and listens. Returns once the display has answered, or after 1 s."""
+    t0 = time.monotonic()
+    gates[body.session_id].hold()     # no nudge over the top of someone who has started talking
+    opened = await eye("listening")
+    ms = int((time.monotonic() - t0) * 1000)
+    log.info("wake %s: display %s in %dms", body.session_id, "answered" if opened else "did not answer", ms)
+    return {"eye": opened, "display_ms": ms}
+
+
 class AskIn(BaseModel):
     session_id: str
     text: str
@@ -429,6 +469,7 @@ async def ask(q: AskIn):
     s, g = session(sid), gates[sid]
     g.hold()
     asking += 1
+    bg(eye("thinking"))            # the eye thinks while the model works; it opens first if the wake word didn't
     out, first_ms, shown, timings, sources = "", None, False, {}, []
     # Camera, memory and live data are fetched side by side; none of them raises.
     shot = asyncio.create_task(grab())
@@ -452,7 +493,7 @@ async def ask(q: AskIn):
                 await emit("answer_delta", sid, ask_id=ask_id, text=chunk)
                 if not shown and "\n" in out.strip():
                     shown = True
-                    bg(show(prompts.split_answer(out)[0]))   # line 1 on the glasses before line 2 is done
+                    bg(show(prompts.split_answer(out)[0], eye="answer"))   # line 1 on the glasses before line 2 is done
     except Exception as e:  # noqa: BLE001 - never a 500
         log.warning("ask %s failed after %dms: %s: %s", ask_id, ms(), type(e).__name__, e)
     finally:
@@ -462,7 +503,7 @@ async def ask(q: AskIn):
     if not display:
         display, speak = FALLBACK, ""
     if not shown:
-        bg(show(display))
+        bg(show(display, eye="answer"))
     latency_ms = ms()
     level = "speak" if speak else "display"
     latencies.append((latency_ms, first_ms))
