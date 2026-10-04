@@ -62,14 +62,17 @@ export function keywordsOf(text: string): string[] {
   return found;
 }
 
+// The brain numbers frames and questions from 1 again every time it restarts, and the tree outlives a restart (it is
+// kept in the browser). An id made of the number alone would make every moment after a restart look like one already
+// on the tree, and the tree would stop growing. The event's time makes the id belong to one moment only.
 /** A leaf for one event from the brain, or null for events that aren't moments (metrics, half-typed answers). */
 export function sproutFromEvent(e: IrisEvent): Sprout | null {
   const at = Date.parse(e.at);
   if (e.type === "decision" && e.level) {
-    return { id: `d:${e.frame_id ?? e.at}`, kind: e.level, at, line: e.speak || e.text || "", reason: e.reason ?? "", momentId: null };
+    return { id: `d:${e.frame_id ?? ""}@${e.at}`, kind: e.level, at, line: e.speak || e.text || "", reason: e.reason ?? "", momentId: null };
   }
   if (e.type === "answer") {
-    return { id: `a:${e.ask_id ?? e.at}`, kind: "speak", at, line: e.speak || e.display || "", reason: `You asked: ${e.question ?? ""}`, momentId: null };
+    return { id: `a:${e.ask_id ?? ""}@${e.at}`, kind: "speak", at, line: e.speak || e.display || "", reason: `You asked: ${e.question ?? ""}`, momentId: null };
   }
   if (e.type === "memory_saved" && e.moment_id != null) {
     const momentId = Number(e.moment_id);
