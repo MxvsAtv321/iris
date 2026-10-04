@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { IrisEvent } from '../api'
-import { askLine, EMPTY, jevLine, lullLine, parseSnapshot, reduce, thoughts, verdict, type AnswerEvent, type Decision, type Lull, type Trace } from './mind'
+import { aheadLine, askLine, EMPTY, jevLine, lullLine, parseSnapshot, reduce, thoughts, verdict, type AnswerEvent, type Decision, type Lull, type Trace } from './mind'
 
 const at = (s: number) => new Date(Date.UTC(2026, 9, 4, 0, 0, s)).toISOString()
 function decision(n: number, level: 'silent' | 'display' | 'speak', trace: Partial<Trace> = {}, session = 'judge-01') {
@@ -96,5 +96,14 @@ describe('System 1’s second opinion', () => {
   it('says nothing when the gate ran without Jev', () => {
     const mind = load([decision(1, 'silent', looked), decision(2, 'silent', { ...looked, jev: 'broken' as never })])
     expect(mind.events.map(e => jevLine((e as Decision).trace))).toEqual(['', ''])
+  })
+})
+
+describe('thinking ahead', () => {
+  it('says what was left and where it was last seen', () => {
+    const mind = load([decision(1, 'speak', { ...looked, urgency: 8, ahead: { item: 'phone', place: 'table', seen: 'A phone on a wooden table.', at: '19:02' } }),
+      decision(2, 'speak', { ...looked, ahead: { item: 'keys', place: 'desk', seen: 'keys on a desk', at: '' } }), decision(3, 'silent', looked)])
+    expect(mind.events.map(e => aheadLine((e as Decision).trace))).toEqual([
+      'Thinking ahead: the phone was last seen on the table, at 19:02.', 'Thinking ahead: the keys were last seen on the desk.', ''])
   })
 })

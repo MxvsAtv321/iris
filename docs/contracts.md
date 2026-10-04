@@ -183,7 +183,8 @@ Every `decision` carries `trace`: how Iris got to that verdict. All keys are alw
   "blocked_by": "cooldown",
   "verdict": "silent",
   "latency_ms": { "capture": 164, "model": 2380, "gate": 0.05, "total": 2551 },
-  "jev": null
+  "jev": null,
+  "ahead": null
 }
 ```
 
@@ -196,6 +197,7 @@ Every `decision` carries `trace`: how Iris got to that verdict. All keys are alw
 - `verdict` is the same as the decision's `level`.
 - `latency_ms`: `capture` is the camera request, `model` the vision call, `gate` the rules, `total` the whole tick. `model` and `gate` are missing when the frame wasn't looked at.
 - `jev` is `null` unless the brain runs with `JEV_GATE=1` (off by default) and Jev answered in time for this frame. Then it is `{ "probability": 0.88, "model": "openrouter:typesafe/jev-1.13", "ms": 210, "watch_urgency": 8 }`: Jev's chance that the moment is worth an interruption, which replaced the vision model's own urgency (`watch_urgency`) before the rules ran. `urgency` is then that probability times ten, rounded, and `latency_ms.jev` is the call. Jev is only asked when the vision model has a line ready.
+- `ahead` is `null` except when Iris is thinking ahead: the scene is a doorway, a corridor or the outdoors, and something the wearer carries was last seen resting on a surface and is not in view. Then it is `{ "item": "phone", "place": "table", "seen": "A phone on a wooden table.", "at": "19:02" }` (plus `moment_id` when memory supplied the sighting), and the decision's line is about that thing: `text` "Phone's on the table", `speak` "Your phone is still on the table.", urgency 8, topic `left-behind-phone`. The gate's rules still apply, so it is said once. It is off unless the brain runs with `THINK_AHEAD=1`.
 
 ## Memory (Darren)
 
@@ -279,7 +281,7 @@ Under `${MEMORY_URL}/api/memory`. Reads are scoped to one judge's session, from 
 | Route | Who calls it | What it does |
 | --- | --- | --- |
 | `POST /ingest` | brain, through `save_moment` | Saves a frame. Raw JPEG body. Headers `Authorization: Bearer <INGEST_TOKEN>`, `X-Session-Id`, `X-Captured-At` (ISO 8601), `X-Description` (URI-encoded), and `X-Image-Hash` (16 hex characters; `save_moment` adds it). Returns `{ "saved": true, "id": 42, "skipped": null, "description": "...", "ms": 310 }`. For a duplicate of the session's last moment, `saved` is false, `id` is null and `skipped` says why: `same_image`, `same_scene` or `same_description`. |
-| `POST /search` | brain router, garden | `{ "session_id", "question", "target"? }`. Without `target`, the object is picked out of the question's words, with no model call. Returns `{ "search_id", "target", "moment", "top", "ms" }`, where `moment` is the match or `null` and `top` is the five closest by meaning. |
+| `POST /search` | brain router, garden | `{ "session_id", "question", "target"?, "quiet"? }`. Without `target`, the object is picked out of the question's words, with no model call. With `"quiet": true` the search is not logged, so the garden does not follow it and `search_id` is `null`; the brain uses it when it looks something up for itself. Returns `{ "search_id", "target", "moment", "top", "ms" }`, where `moment` is the match or `null` and `top` is the five closest by meaning. |
 | `GET /moments?session_id=&limit=` | garden | Every moment in the session, oldest first |
 | `GET /moments/:id/image?session_id=` | garden, phone page | The JPEG, served from the `uploads` bucket |
 | `GET /moments/:id/depth?session_id=` | garden | The cached depth map PNG from the bucket, or 404 until the garden makes one |
