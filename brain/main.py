@@ -464,6 +464,8 @@ async def metrics_loop():
 async def keep_warm_once():
     """Touch every provider a question can need: the models, the voice and memory. Never raises."""
     jobs = [llm.warm(), voice.warm(http)]
+    if jev.ON:
+        jobs.append(http.head(jev.URL, timeout=3))
     if memory_client:
         jobs.append(memory_client().warm())
     await asyncio.gather(*jobs, return_exceptions=True)

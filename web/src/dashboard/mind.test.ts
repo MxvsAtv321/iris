@@ -88,7 +88,7 @@ describe('a question’s wait, step by step', () => {
 
 describe('System 1’s second opinion', () => {
   it('shows the probability, and the vision model’s own urgency when Jev changed it', () => {
-    const mind = load([decision(1, 'silent', { ...looked, urgency: 3, jev: { probability: 0.31, model: 'openrouter:typesafe/jev-1.13', ms: 180, watch_urgency: 8 } })])
+    const mind = load([decision(1, 'silent', { ...looked, urgency: 3, jev: { probability: 0.31, model: 'typesafe-ai/jev', ms: 180, watch_urgency: 8 } })])
     expect(jevLine((mind.events[0] as Decision).trace)).toBe('Jev: 31% worth interrupting. The vision model alone said urgency 8.')
     const agreed = load([decision(1, 'speak', { ...looked, urgency: 9, jev: { probability: 0.9, model: 'm', ms: 150, watch_urgency: 9 } })])
     expect(jevLine((agreed.events[0] as Decision).trace)).toBe('Jev: 90% worth interrupting.')

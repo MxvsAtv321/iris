@@ -1,64 +1,62 @@
 """System 1: a fast second opinion on whether a moment is worth an interruption.
 
-The vision model describes the frame and proposes a line. With JEV_GATE=1, Jev then answers one
-question about it, "should Iris interrupt?", with a probability, and that probability replaces the
-vision model's own urgency before the gate's four rules run. For questions, Jev picks the mode
-(ask, identify, read, recall) ahead of the rules in prompts.pick_mode.
+Jev is TypeSafe AI's decision model. It does not write text: it is given some state and typed
+questions, and returns a probability for each. Iris reaches it through the Vercel AI Gateway's
+evaluation endpoint (POST /v1/evaluate), which is not a chat-completions API, so it has its own
+small client here rather than going through llm.py.
 
-Off by default. When it is on and Jev is slow, fails or says something unreadable, the vision
-model's urgency and the rule-picked mode are used, exactly as if it were off.
+With JEV_GATE=1 the vision model still describes the frame and proposes a line. Jev is then asked one
+boolean question about it, "would the wearer want to be interrupted with this line right now?", and
+its probability replaces the vision model's own urgency before the gate's four rules run. For
+questions, Jev picks the mode (ask, identify, read, recall) ahead of the rules in prompts.pick_mode.
 
-  JEV_GATE=1                              turn it on
-  JEV_MODEL=openrouter:typesafe/jev-1.13  any provider:model in llm.PROVIDERS
-  JEV_BUDGET_S=1.5                        how long a frame waits for Jev
-  JEV_MODE_BUDGET_S=0.4                   how long a question waits for Jev
+Off by default. When it is on and Jev is slow, refuses, fails or is unsure, the vision model's
+urgency and the rule-picked mode are used, exactly as if it were off. After three failures in a
+row it is left alone for a minute, so an outage costs a few frames a moment each, not every frame.
 
-Run `python jev.py` for the self-check (no network).
+  JEV_GATE=1                  turn it on
+  AI_GATEWAY_API_KEY=...      the Vercel AI Gateway key (Jev needs paid credits on the team)
+  JEV_MODEL=typesafe-ai/jev   any evaluation model on the gateway
+  JEV_BUDGET_S=1.5            how long a frame waits for Jev
+  JEV_MODE_BUDGET_S=0.4       how long a question waits for Jev
+
+Run `python jev.py` for the self-check (no network), `python jev.py ping` for one real call.
 """
-import asyncio
 import logging
 import os
-import re
 import time
 
 import llm
 
 log = logging.getLogger("iris.jev")
 ON = (os.getenv("JEV_GATE") or "0") == "1"
-MODEL = os.getenv("JEV_MODEL") or "openrouter:typesafe/jev-1.13"
+URL = (os.getenv("AI_GATEWAY_URL") or "https://ai-gateway.vercel.sh/v1").rstrip("/") + "/evaluate"
+MODEL = os.getenv("JEV_MODEL") or "typesafe-ai/jev"
 BUDGET_S = float(os.getenv("JEV_BUDGET_S") or 1.5)
 MODE_BUDGET_S = float(os.getenv("JEV_MODE_BUDGET_S") or 0.4)
-MODES = ("ask", "identify", "read", "recall")
+MODE_SURE = 0.6            # below this Jev's pick of a mode is a guess, and the rules decide
+PAUSE_AFTER, PAUSE_S = 3, 60
+failures = {"row": 0, "until": 0.0}
 
-INTERRUPT = """You are the instinct of Iris, glasses that think ahead. Iris has looked at what the wearer sees and has a line ready.
-Decide how likely it is that the wearer would want to be interrupted with that line right now. Most moments are not worth it.
-
-Reply with ONE JSON object and nothing else: {"interrupt": a probability from 0 to 1}
-
-0.85 to 1: a mistake in visible writing, a safety hazard, or something about to be missed.
-0.5 to 0.8: useful but not urgent.
-0 to 0.3: ordinary life, or nothing worth saying.
-A line the wearer was already told is under 0.1. Be calibrated: of the moments you call 0.7, seven in ten should deserve the interruption."""
-
-MODE = """Pick how an assistant in someone's glasses should answer their question. Reply with exactly one word.
-recall: about the past, where or when they saw or left something.
-read: they want the text in view read out.
-identify: they want to know what the thing in view is.
-ask: anything else."""
-
-
-def probability(text):
-    """Jev's reply -> a probability from 0 to 1, or None if it can't be read. Takes {"interrupt": 0.83}, 0.83 or 83%."""
-    t = (text or "").strip()
-    w = llm.parse_json(t)
-    if isinstance(w, dict):
-        t = str(w.get("interrupt", w.get("probability", "")))
-    m = re.search(r"-?\d+(?:\.\d+)?\s*%?", t)
-    if not m:
-        return None
-    raw = m.group(0).strip()
-    p = float(raw.rstrip("% ")) / (100 if raw.endswith("%") else 1)
-    return p if 0 <= p <= 1 else None
+INTERRUPT = {
+    "type": "boolean",
+    "instructions": "Would the wearer of these glasses want to be interrupted with this line right now?",
+    "criteria": {
+        "true": "The line points out a mistake in visible writing, a safety hazard, or something about to be missed, "
+                "and the wearer has not already been told.",
+        "false": "Ordinary life, nothing worth saying, something merely interesting, or something the wearer was already told.",
+    },
+}
+MODE = {
+    "type": "choice",
+    "instructions": "How should an assistant in smart glasses answer this question from the wearer?",
+    "criteria": {
+        "recall": "It is about the past: where or when they saw, left or put something.",
+        "read": "They want the text in view read out.",
+        "identify": "They want to know what the thing in view is.",
+        "ask": "Any other question about what they are looking at, or about the world.",
+    },
+}
 
 
 def urgency(p):
@@ -67,76 +65,157 @@ def urgency(p):
 
 
 def moment(w, said):
-    """What Jev is shown: the scene, the line Iris has ready, and what the wearer was already told."""
-    parts = [f"Scene: {w.get('description') or ''}",
-             f"Line ready for the display: {w.get('text') or '(none)'}",
-             f"Line ready to speak: {w.get('say') or '(none)'}",
-             f"Why Iris thinks it matters: {w.get('reason') or ''}"]
-    if said:
-        parts.append("Already told the wearer:\n" + "\n".join(said[-3:]))
-    return "\n".join(parts)
+    """The state Jev is given: the scene, the line Iris has ready, and what the wearer was already told."""
+    return {
+        "scene": str(w.get("description") or ""),
+        "line_for_the_display": str(w.get("text") or ""),
+        "line_to_speak": str(w.get("say") or ""),
+        "why_iris_thinks_it_matters": str(w.get("reason") or ""),
+        "already_told_the_wearer": [str(line) for line in list(said)[-3:]],
+    }
 
 
-async def reply(system, text, budget, max_tokens):
-    async with asyncio.timeout(budget):
-        return "".join([c async for c in llm.stream(MODEL, llm.messages(system, text), max_tokens)])
+async def evaluate(state, questions, budget):
+    """One call to the gateway's evaluation endpoint. -> the answers, keyed like the questions. Raises on any failure."""
+    key = os.getenv("AI_GATEWAY_API_KEY")
+    if not key:
+        raise RuntimeError("AI_GATEWAY_API_KEY not set")
+    now = time.monotonic()
+    if now < failures["until"]:
+        raise RuntimeError("paused after repeated failures")
+    try:
+        r = await llm.http.post(URL, json={"model": MODEL, "state": state, "questions": questions},
+                                headers={"Authorization": f"Bearer {key}"}, timeout=budget)
+        if r.status_code >= 400:
+            raise RuntimeError(f"HTTP {r.status_code}: {r.text[:160]}")
+        body = r.json()
+        answers = body["answers"]
+    except Exception:
+        failures["row"] += 1
+        if failures["row"] >= PAUSE_AFTER:
+            failures.update(row=0, until=now + PAUSE_S)
+            log.warning("jev failed %d times in a row; not asking it for %d s", PAUSE_AFTER, PAUSE_S)
+        raise
+    failures["row"] = 0
+    llm._roll()
+    llm.usage["calls"] += 1
+    try:
+        llm.usage["usd"] += float(body.get("providerMetadata", {}).get("gateway", {}).get("cost") or 0)
+    except (TypeError, ValueError, AttributeError):
+        pass
+    return answers
 
 
 async def interrupt(w, said=(), budget=None):
-    """-> {"probability", "model", "ms"} for a judged frame, or None when Jev didn't give a usable answer."""
+    """-> {"probability", "model", "ms"} for a judged frame, or None when Jev gave no usable answer."""
     t0 = time.monotonic()
     try:
-        p = probability(await reply(INTERRUPT, moment(w, list(said)), budget or BUDGET_S, 60))
+        answers = await evaluate(moment(w, said), {"interrupt": INTERRUPT}, budget or BUDGET_S)
+        p = float(answers["interrupt"]["probability"])
+        if not 0 <= p <= 1:
+            raise ValueError(f"probability {p}")
     except Exception as e:  # noqa: BLE001 - the vision model's own urgency stands
         log.warning("jev interrupt: %s: %s", type(e).__name__, e)
-        return None
-    if p is None:
-        log.warning("jev interrupt: unreadable reply")
         return None
     return {"probability": round(p, 3), "model": MODEL, "ms": round((time.monotonic() - t0) * 1000)}
 
 
 async def mode(question, budget=None):
-    """-> one of MODES, or None when Jev didn't answer in time: the rules' mode stands."""
+    """-> ask, identify, read or recall, or None when Jev didn't answer in time or wasn't sure: the rules' mode stands."""
     try:
-        words = (await reply(MODE, question, budget or MODE_BUDGET_S, 10)).strip().lower().split()
+        answer = (await evaluate(str(question or ""), {"mode": MODE}, budget or MODE_BUDGET_S))["mode"]
+        choice = answer["choice"]
+        sure = float(answer.get("probabilities", {}).get(choice, 0))
     except Exception as e:  # noqa: BLE001
         log.info("jev mode: %s: %s", type(e).__name__, e)
         return None
-    word = words[0].strip(".,:\"'") if words else ""
-    return word if word in MODES else None
+    return choice if choice in MODE["criteria"] and sure >= MODE_SURE else None
 
 
 if __name__ == "__main__":
-    assert probability('{"interrupt": 0.83}') == 0.83 and probability("0.4") == 0.4 and probability("83%") == 0.83
-    assert probability('```json\n{"interrupt": 1}\n```') == 1.0 and probability('{"probability": 0.2}') == 0.2
-    assert probability("") is None and probability("maybe") is None and probability("7") is None and probability('{"interrupt": 1.4}') is None
+    import asyncio
+    import sys
+
+    if sys.argv[1:2] == ["ping"]:
+        async def ping():
+            w = {"description": "A whiteboard of times tables. Line 2 reads 7 x 8 = 54.", "text": "Line 2: 7x8 is 56",
+                 "say": "Line 2 says seven times eight is fifty-four. It's fifty-six.", "reason": "arithmetic error"}
+            print(MODEL, "interrupt:", await interrupt(w, budget=10))
+            t0 = time.monotonic()
+            print(MODEL, "mode for 'where did I leave my keys':", await mode("where did I leave my keys", budget=10),
+                  f"({round((time.monotonic() - t0) * 1000)} ms)")
+        asyncio.run(ping())
+        sys.exit()
+
     assert [urgency(p) for p in (0.0, 0.49, 0.5, 0.79, 0.8, 1.0)] == [0, 5, 5, 8, 8, 10]
-    assert "Already told" not in moment({"description": "a desk"}, []) and "Already told" in moment({}, ["19:02 Line 2: 7x8 is 56"])
+    state = moment({"description": "a desk", "say": "hi"}, ["a", "b", "c", "d"])
+    assert state["scene"] == "a desk" and state["already_told_the_wearer"] == ["b", "c", "d"] and state["line_for_the_display"] == ""
+
+    class Reply:
+        def __init__(self, status, body):
+            self.status_code, self.body, self.text = status, body, str(body)
+
+        def json(self):
+            return self.body
+
+    class Gateway:
+        """Stands in for llm.http: answers every request the same way and keeps what it was sent."""
+        def __init__(self, status=200, answers=None, delay=0.0, cost="0.00001155"):
+            self.status, self.answers, self.delay, self.cost, self.sent = status, answers or {}, delay, cost, []
+
+        async def post(self, url, json=None, headers=None, timeout=None):
+            self.sent.append((url, json, headers))
+            if self.delay > (timeout or 9):
+                await asyncio.sleep(timeout)
+                raise TimeoutError("timed out")
+            body = {"model": MODEL, "answers": self.answers, "providerMetadata": {"gateway": {"cost": self.cost}}}
+            return Reply(self.status, body if self.status == 200 else {"error": {"message": "no access"}})
 
     async def check():
-        real = llm.stream
+        real, key = llm.http, os.environ.get("AI_GATEWAY_API_KEY")
+        os.environ["AI_GATEWAY_API_KEY"] = "test-key"
+        w = {"description": "a whiteboard", "say": "Line 2 is wrong", "text": "Line 2: 7x8 is 56"}
 
-        def says(text, delay=0.0):
-            async def stream(model, msgs, max_tokens=0):
-                await asyncio.sleep(delay)
-                yield text
-            return stream
+        llm.http = gw = Gateway(answers={"interrupt": {"type": "boolean", "probability": 0.914}})
+        calls, spent = llm.calls_today(), llm.usage["usd"]
+        got = await interrupt(w, ["19:02 hello"])
+        assert got["probability"] == 0.914 and got["model"] == MODEL and got["ms"] >= 0
+        url, body, headers = gw.sent[0]
+        assert url.endswith("/v1/evaluate") and headers == {"Authorization": "Bearer test-key"}
+        assert body["model"] == MODEL and body["questions"]["interrupt"]["type"] == "boolean"
+        assert body["state"]["line_to_speak"] == "Line 2 is wrong" and body["state"]["already_told_the_wearer"] == ["19:02 hello"]
+        assert llm.calls_today() == calls + 1 and abs(llm.usage["usd"] - spent - 0.00001155) < 1e-12   # counted like any model call
 
-        llm.stream = says('{"interrupt": 0.91}')
-        got = await interrupt({"description": "a whiteboard", "say": "Line 2 is wrong"})
-        assert got["probability"] == 0.91 and got["model"] == MODEL and got["ms"] >= 0
-        llm.stream = says("not sure")
-        assert await interrupt({}) is None                      # unreadable: the vision model's urgency stands
-        llm.stream = says('{"interrupt": 0.9}', delay=0.2)
-        assert await interrupt({}, budget=0.05) is None         # too slow: same
-        llm.stream = says("Recall.")
+        llm.http = Gateway(answers={"mode": {"type": "choice", "choice": "recall", "probabilities": {"recall": 0.93, "ask": 0.07}}})
         assert await mode("where did I leave my keys") == "recall"
-        llm.stream = says("weather")
-        assert await mode("is it raining") is None              # not a mode: the rules decide
-        llm.stream = says("read", delay=0.2)
-        assert await mode("read this", budget=0.05) is None
-        llm.stream = real
+        llm.http = Gateway(answers={"mode": {"type": "choice", "choice": "read", "probabilities": {"read": 0.41, "ask": 0.39}}})
+        assert await mode("what about this") is None                       # unsure: the rules decide
+        llm.http = Gateway(answers={"mode": {"type": "choice", "choice": "weather", "probabilities": {"weather": 1}}})
+        assert await mode("is it raining") is None                         # not one of the modes
+
+        llm.http = Gateway(answers={"interrupt": {"type": "boolean", "probability": 7}})
+        assert await interrupt(w) is None                                  # unreadable: the vision model's urgency stands
+        llm.http = Gateway(answers={})
+        assert await interrupt(w) is None
+        llm.http = Gateway(answers={"interrupt": {"probability": 0.9}}, delay=5)
+        assert await interrupt(w, budget=0.05) is None                     # too slow: same
+        failures.update(row=0, until=0.0)
+
+        llm.http = gw = Gateway(status=403)                                # no access (the free tier), or an outage
+        for _ in range(PAUSE_AFTER):
+            assert await interrupt(w) is None
+        assert len(gw.sent) == PAUSE_AFTER and failures["until"] > time.monotonic()
+        assert await interrupt(w) is None and await mode("read this") is None
+        assert len(gw.sent) == PAUSE_AFTER                                 # paused: nothing more was sent
+        failures.update(row=0, until=0.0)
+
+        os.environ.pop("AI_GATEWAY_API_KEY")
+        llm.http = gw = Gateway(answers={"interrupt": {"probability": 0.9}})
+        assert await interrupt(w) is None and gw.sent == []               # no key: no call
+        failures.update(row=0, until=0.0)
+        llm.http = real
+        if key:
+            os.environ["AI_GATEWAY_API_KEY"] = key
 
     asyncio.run(check())
     print("jev ok")
