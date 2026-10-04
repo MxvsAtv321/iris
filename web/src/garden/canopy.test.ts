@@ -21,14 +21,21 @@ describe('keywordsOf', () => {
 describe('sproutFromEvent', () => {
   it('turns a decision into a leaf of its level', () => {
     const s = sproutFromEvent(decision({ level: 'speak', text: 'Line 2: 7x8 is 56', speak: 'Line 2 says fifty-four.', reason: 'urgency 9', frame_id: 'f_0192' }))
-    expect(s).toMatchObject({ id: 'd:f_0192', kind: 'speak', line: 'Line 2 says fifty-four.', reason: 'urgency 9', momentId: null })
+    expect(s).toMatchObject({ id: 'd:f_0192@2026-10-03T19:02:11Z', kind: 'speak', line: 'Line 2 says fifty-four.', reason: 'urgency 9', momentId: null })
+  })
+  it('keeps growing after the brain restarts and numbers its frames from 1 again', () => {
+    const before = sproutFromEvent(decision({ frame_id: 'f_0001', at: '2026-10-03T19:02:11Z' }))!
+    const again = sproutFromEvent(decision({ frame_id: 'f_0001', at: '2026-10-03T19:02:11Z' }))!     // the same event, delivered twice
+    const after = sproutFromEvent(decision({ frame_id: 'f_0001', at: '2026-10-03T19:40:00Z' }))!     // a new moment with a reused number
+    const tree = grow(grow(grow(EMPTY, [before], 0, 100), [again], 0, 100), [after], 0, 100)
+    expect(tree.leaves.map(l => l.id)).toEqual(['d:f_0001@2026-10-03T19:02:11Z', 'd:f_0001@2026-10-03T19:40:00Z'])
   })
   it('keeps silent decisions, as faint leaves', () => {
     expect(sproutFromEvent(decision({}))).toMatchObject({ kind: 'silent', line: '' })
   })
   it('turns an answer into a leaf where Iris spoke', () => {
     const s = sproutFromEvent({ type: 'answer', session_id: 's', at: '2026-10-03T19:02:11Z', ask_id: 'a_7', question: 'how much protein?', display: '12g', speak: 'About 12 grams.', latency_ms: 900 })
-    expect(s).toMatchObject({ id: 'a:a_7', kind: 'speak', line: 'About 12 grams.', reason: 'You asked: how much protein?' })
+    expect(s).toMatchObject({ id: 'a:a_7@2026-10-03T19:02:11Z', kind: 'speak', line: 'About 12 grams.', reason: 'You asked: how much protein?' })
   })
   it('turns a saved memory into a blossom', () => {
     const s = sproutFromEvent({ type: 'memory_saved', session_id: 's', at: '2026-10-03T19:02:11Z', moment_id: 42, description: 'phone, mug' })
