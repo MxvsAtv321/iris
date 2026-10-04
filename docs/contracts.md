@@ -183,6 +183,7 @@ Every `decision` carries `trace`: how Iris got to that verdict. All keys are alw
   "topic": "whiteboard-math",
   "model": "xai:grok-4.20-reasoning",
   "candidate": { "text": "Line 2: 7x8 is 56", "say": "Line 2 says seven times eight is fifty-four, it's fifty-six." },
+  "said_before": "",
   "urgency": 9, "display_at": 5, "speak_at": 8,
   "proposed": "speak",
   "rules": [
@@ -203,6 +204,7 @@ Every `decision` carries `trace`: how Iris got to that verdict. All keys are alw
 - `looked` is true when the vision model judged this frame. Most frames are not looked at, and `skipped` says why: `no_change` (the scene is the same as the last one judged), `model_spacing` (it changed, but the last model call was under 6 s ago), `question_in_progress`, or `error` (`reason` has the error). `skipped` is `null` when `looked` is true.
 - `change` is how different the frame is from the last one judged, against the threshold that triggers a look; `null` on the first frame of a session.
 - `saw` is the model's description, `why` its reason for the urgency, `model` the model that answered: the watch model, or `WATCH_LATE_MODEL` when the watch model was slow to start and the second model answered first, or the backup if the watch model failed. `candidate` is the line the model had ready, kept here even when Iris stayed silent, so the dashboard can show what was held back. The top-level `text` and `speak` stay empty unless the line was actually shown or spoken.
+- `said_before` is for the silence the model chooses itself. The watch prompt lists what the wearer was already told, and the model keeps its urgency low instead of repeating it, so the gate's rules never see the moment. When that is why it stayed quiet, `said_before` is the earlier line (the session's own wording when the model's copy matches it); otherwise it is empty. It is only set when urgency is under `display_at` and the session has said something.
 - `urgency` is 0 to 10, or `null` when the frame wasn't looked at or the reply couldn't be read. `proposed` is the level that urgency asks for on its own: `speak` at `speak_at`, `display` at `display_at`, otherwise `silent`.
 - `rules` are the gate's four rules in the order it checks them. `outcome` is `passed`, `blocked`, `softened` (only `rate_limit`: spoken too recently, so the line is shown instead) or `not_checked` (urgency was under `display_at`, so there was nothing to hold back). Every rule is worked out even after one blocks; `blocked_by` names the first that blocked, which is the one that decided, or is `null`. `repeat` also carries its `similarity` and `threshold`. `quiet_after_answer` covers the 10 s after a question is asked or answered, or the wake word is heard. `detail` is a plain phrase to show as it is. `rules` is empty when the frame wasn't looked at.
 - `verdict` is the same as the decision's `level`.

@@ -11,6 +11,7 @@ export type Trace = {
   change: { score: number; threshold: number } | null
   saw: string; why: string; topic: string; model: string | null
   candidate: { text: string; say: string }
+  said_before: string   // the earlier line, when the model itself stayed quiet because the wearer was already told
   urgency: number | null; display_at: number; speak_at: number; proposed: Level
   rules: Rule[]; blocked_by: RuleName | null; verdict: Level
   latency_ms: { capture?: number; model?: number; jev?: number; gate?: number; total?: number }
@@ -60,6 +61,7 @@ function traceOf(event: IrisEvent): Trace {
     saw: String(t.saw || ''), why: String(t.why || ''), topic: String(t.topic || ''),
     model: typeof t.model === 'string' ? t.model : null,
     candidate: { text: String(t.candidate?.text || ''), say: String(t.candidate?.say || '') },
+    said_before: String(t.said_before || ''),
     urgency: typeof t.urgency === 'number' ? t.urgency : null,
     display_at: typeof t.display_at === 'number' ? t.display_at : 5,
     speak_at: typeof t.speak_at === 'number' ? t.speak_at : 8,
@@ -174,23 +176,28 @@ export function lullLine(lull: Lull, until: number): string {
   }
 }
 
+/** Silenced on purpose: by one of the gate's rules, or by the model declining to repeat itself. */
+export const heldBack = (d: Decision) => d.level === 'silent' && !!(d.trace.blocked_by || d.trace.said_before)
+
 export const RULE_LABEL: Record<RuleName, string> = {
   cooldown: 'Cooldown', repeat: 'Repeat', quiet_after_answer: 'Quiet after an answer', rate_limit: 'Rate limit',
 }
 
 /** What Iris did with a moment, and why, as one plain sentence each. */
-export function verdict(d: Decision): { did: string; because: string; heldBack: string; said: string } {
+export function verdict(d: Decision): { did: string; because: string; heldBack: string; said: string; saidBefore: string } {
   const t = d.trace
   const line = t.candidate.say || t.candidate.text
-  if (d.level === 'speak') return { did: 'Spoke', because: '', heldBack: '', said: d.speak || d.text }
+  const none = { because: '', heldBack: '', said: '', saidBefore: '' }
+  if (d.level === 'speak') return { ...none, did: 'Spoke', said: d.speak || d.text }
   if (d.level === 'display') {
     const softened = t.rules.find(r => r.outcome === 'softened')
-    return { did: softened ? 'Showed a line instead of speaking' : 'Showed a line', because: softened ? sentence(softened.detail) : '', heldBack: '', said: d.text || line }
+    return { ...none, did: softened ? 'Showed a line instead of speaking' : 'Showed a line', because: softened ? sentence(softened.detail) : '', said: d.text || line }
   }
   const blocker = t.rules.find(r => r.rule === t.blocked_by)
-  if (blocker) return { did: 'Stayed silent', because: `${RULE_LABEL[blocker.rule]}: ${sentence(blocker.detail, false)}`, heldBack: line, said: '' }
-  if (t.urgency === null) return { did: 'Stayed silent', because: 'The model’s reply couldn’t be read.', heldBack: '', said: '' }
-  return { did: 'Stayed silent', because: `Urgency ${t.urgency} is under ${t.display_at}, where it would show a line.`, heldBack: '', said: '' }
+  if (blocker) return { ...none, did: 'Stayed silent', because: `${RULE_LABEL[blocker.rule]}: ${sentence(blocker.detail, false)}`, heldBack: line }
+  if (t.said_before) return { ...none, did: 'Stayed silent', because: 'Already said: Iris chose not to repeat itself.', saidBefore: t.said_before }
+  if (t.urgency === null) return { ...none, did: 'Stayed silent', because: 'The model’s reply couldn’t be read.' }
+  return { ...none, did: 'Stayed silent', because: `Urgency ${t.urgency} is under ${t.display_at}, where it would show a line.` }
 }
 
 /** A question's wait, step by step, in the order the wearer lives it. An answer from a brain without timings gets the old line. */

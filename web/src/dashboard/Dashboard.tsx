@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
-import { aheadLine, askLine, jevLine, keyOf, liveCaption, lullLine, ms, RULE_LABEL, thoughts, verdict, type AnswerEvent, type Decision, type Metrics, type MindEvent, type Tally, type Thought } from './mind'
+import { aheadLine, askLine, heldBack, jevLine, keyOf, liveCaption, lullLine, ms, RULE_LABEL, thoughts, verdict, type AnswerEvent, type Decision, type Metrics, type MindEvent, type Tally, type Thought } from './mind'
 import { useMind } from './useMind'
 import './dashboard.css'
 
@@ -146,7 +146,7 @@ function Moment({ decision, expanded, held, onPin, style }: { decision: Decision
   const v = verdict(decision)
   const checked = t.rules.some(r => r.outcome !== 'not_checked')
   const lat = t.latency_ms
-  return <article className="mind-moment" data-level={decision.level} data-expanded={expanded} data-held={held} data-blocked={!!t.blocked_by} style={style}>
+  return <article className="mind-moment" data-level={decision.level} data-expanded={expanded} data-held={held} data-blocked={heldBack(decision)} style={style}>
     <button className="mind-when" onClick={onPin} aria-pressed={held} title={held ? 'Back to now' : 'Show the frame Iris saw'}>{clock(decision.at)}</button>
     <dl>
       <div><dt>Saw</dt><dd>{t.saw || 'Nothing it could put into words.'}</dd></div>
@@ -160,11 +160,15 @@ function Moment({ decision, expanded, held, onPin, style }: { decision: Decision
           <span>{RULE_LABEL[r.rule]}</span>
           <span>{r.outcome === 'not_checked' ? 'not checked' : r.outcome}{r.similarity !== undefined ? `, similarity ${r.similarity.toFixed(2)} of ${r.threshold}` : ''}{r.detail ? `: ${r.detail}` : ''}</span>
         </li>)}</ol>}
+        {expanded && v.saidBefore && <ol className="mind-rules"><li data-outcome="blocked">
+          <span>Already said</span><span>the model chose silence itself, before any rule was needed</span>
+        </li></ol>}
       </dd></div>
       <div><dt>Decided</dt><dd className="mind-decided">
         <strong>{v.did}.</strong>{v.because && ` ${v.because}`}
         {v.said && <q>{v.said}</q>}
         {v.heldBack && <span className="mind-held">It had this ready: <q>{v.heldBack}</q></span>}
+        {v.saidBefore && <span className="mind-held">What it said earlier: <q>{v.saidBefore}</q></span>}
         {expanded && <span className="mind-latency">Capture {ms(lat.capture)}, model {ms(lat.model)}{lat.jev !== undefined ? `, Jev ${ms(lat.jev)}` : ''}, gate {ms(lat.gate)}{t.model ? `, with ${t.model.split(':').pop()}` : ''}</span>}
       </dd></div>
     </dl>
@@ -233,12 +237,12 @@ function Timeline({ events, now, pinned, onPin }: { events: MindEvent[]; now: nu
         if (e.type === 'answer') return <circle key={key} className="tl-answer" cx={x(t)} cy="50%" r="5" />
         if (e.level === 'speak') return <circle key={key} className="tl-speak" cx={x(t)} cy="50%" r="5" />
         if (e.level === 'display') return <circle key={key} className="tl-display" cx={x(t)} cy="50%" r="3.5" />
-        if (e.trace.blocked_by) return <circle key={key} className="tl-held" cx={x(t)} cy="50%" r="3.5" />
+        if (heldBack(e)) return <circle key={key} className="tl-held" cx={x(t)} cy="50%" r="3.5" />
         return <line key={key} className={e.trace.looked ? 'tl-looked' : 'tl-tick'} x1={x(t)} x2={x(t)} y1={e.trace.looked ? '22%' : '38%'} y2={e.trace.looked ? '78%' : '62%'} />
       })}
     </svg>
     <p><span>{start ? clock(start) : 'Session timeline'}</span>
-      <span className="tl-legend"><i className="k-tick" />watching <i className="k-looked" />looked, stayed silent <i className="k-held" />held back by a rule <i className="k-display" />showed a line <i className="k-speak" />spoke <i className="k-answer" />answered a question</span>
+      <span className="tl-legend"><i className="k-tick" />watching <i className="k-looked" />looked, stayed silent <i className="k-held" />held back <i className="k-display" />showed a line <i className="k-speak" />spoke <i className="k-answer" />answered a question</span>
       <span>{!start ? '' : now ? 'now' : clock(end)}</span></p>
   </footer>
 }

@@ -40,6 +40,18 @@ def is_echo(text, candidates, threshold=REPEAT_SIM):
     return echo_score(text, candidates) >= threshold
 
 
+def said_before(claim, said, now_urgent):
+    """The watch model can stay quiet on its own because the wearer was already told. `claim` is the earlier
+    line it says covers this moment; `said` is the session's lines ("HH:MM line"). Returns the line to show on
+    the dashboard, or "" when the claim doesn't hold: nothing was said yet, or it wants to interrupt anyway."""
+    claim = str(claim or "").strip()
+    lines = [str(l)[6:] for l in said or []]
+    if not claim or not lines or now_urgent:
+        return ""
+    sim, match = max((echo_score(claim, [l]), l) for l in lines)
+    return match if sim >= REPEAT_SIM else claim[:160]
+
+
 def to_focus_box(box_2d):
     """[ymin, xmin, ymax, xmax] on 0-1000 (the convention the watch prompt asks for) -> [x, y, w, h] fractions, or None."""
     try:
@@ -180,4 +192,11 @@ if __name__ == "__main__":
     level, _, tr = g.explain({"urgency": 2}, t)
     assert level == "silent" and tr["blocked_by"] is None and {r["outcome"] for r in tr["rules"]} == {"not_checked"}
     assert g.explain({"urgency": "high"}, t)[2]["urgency"] is None
+
+    # The model's own silence: only counted when something was said and it isn't interrupting anyway.
+    told = ["19:02 Line 2 says seven times eight is fifty-four, it's fifty-six."]
+    assert said_before("line 2 says seven times eight is fifty-four, it's fifty-six", told, False) == told[0][6:]
+    assert said_before("the math error on line 2", told, False) == "the math error on line 2"
+    assert said_before("the math error", [], False) == "" and said_before("", told, False) == ""
+    assert said_before("the math error", told, True) == ""
     print("gate ok")

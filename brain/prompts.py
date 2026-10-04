@@ -16,6 +16,7 @@ Reply with ONE JSON object and nothing else:
  "say": "one short sentence to speak, or empty",
  "topic": "short-kebab-case key for what this is about",
  "reason": "why this urgency, under 12 words",
+ "said_before": "the earlier line, copied from 'Already told the wearer', when that is the only reason to stay quiet; otherwise empty",
  "box_2d": [ymin, xmin, ymax, xmax]}}
 
 box_2d is where you are looking, on a 0-1000 scale: the exact line, object or hazard behind the urgency, otherwise the main subject.
@@ -149,6 +150,7 @@ if __name__ == "__main__":
     assert format_lines(["a" * 10, "b" * 10, "c"], max_chars=14) == "[1 earlier line(s) omitted]\n" + "b" * 10 + "\nc"
     assert DEICTIC.search("is this jacket warm enough") and not DEICTIC.search("is it going to rain")
     assert "Live data" in build_ask("weather?", {}, live_note="62F, clear") and "Live data" not in build_ask("q", {})
+    assert "said_before" in WATCH and "Already told the wearer" in build_watch({"said": ["19:02 Line 2: 7x8 is 56"]})
     assert first_sentence("That bar has about 12 grams") == ""                       # still being written
     assert first_sentence("That bar has about 12 grams.") == ""                      # might be "12 grams. " or the end
     assert first_sentence("That bar has about 12 grams. It") == "That bar has about 12 grams."
