@@ -18,6 +18,7 @@ from PIL import Image
 from pydantic import BaseModel
 
 import ahead
+import camera
 import gate
 import jev
 import live
@@ -46,7 +47,7 @@ WATCH_TIMEOUT_S = 12           # per model; the loop can wait, a reasoning watch
 FALLBACK = "Didn't catch that, try again"
 NO_PHOTO = "\n(The camera didn't respond, so there is no photo. If the question needs one, say you can't see right now.)"
 HERE = Path(__file__).resolve().parent
-STATE = HERE / "state.json"
+STATE = Path(os.getenv("IRIS_STATE") or HERE / "state.json")   # a second brain on this laptop (tests) must not share the first one's
 BAKEOFF = HERE / "bakeoff" / "results.json"
 
 http = llm.http
@@ -142,6 +143,21 @@ async def emit(kind, sid, **fields):
 
 
 camera_lock = asyncio.Lock()   # the ESP32 serves one request at a time
+# What each framesize setting produces. A frame of any other size means the camera restarted and lost its settings.
+FRAME_SIZES = {"6": (320, 240), "10": (640, 480), "11": (800, 600), "12": (1024, 768)}
+healed = {"at": -1e9}
+
+
+def lost_settings(jpeg):
+    """True when the camera is not sending the size it was told to: it has restarted into its defaults,
+    which are also upside down for this mount. Checked on the frame as the camera sent it, before it is turned."""
+    want = FRAME_SIZES.get(CAMERA_SETTINGS.get("framesize") or "")
+    if not want:
+        return False
+    try:
+        return Image.open(io.BytesIO(jpeg)).size != want
+    except Exception:  # noqa: BLE001 - an unreadable frame says nothing about the settings
+        return False
 
 
 async def capture(reuse_s=0.0):
@@ -152,8 +168,13 @@ async def capture(reuse_s=0.0):
             return frame["jpeg"]
         r = await http.get(CAMERA + "/capture", timeout=1.5)
     r.raise_for_status()
-    frame["jpeg"], frame["ts"] = r.content, time.time()
-    return r.content
+    if lost_settings(r.content) and time.monotonic() - healed["at"] > 15:
+        healed["at"] = time.monotonic()
+        log.warning("the camera restarted (its frames are the wrong size); sending its settings again")
+        bg(setup_camera())
+    jpeg = await asyncio.to_thread(camera.upright, r.content) if camera.ROTATE else r.content
+    frame["jpeg"], frame["ts"] = jpeg, time.time()     # upright before anything else sees it
+    return jpeg
 
 
 async def setup_camera():

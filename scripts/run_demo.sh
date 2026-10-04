@@ -5,6 +5,7 @@
 #   scripts/run_demo.sh status   what is running, and the link
 #   scripts/run_demo.sh link     just the link
 #   scripts/run_demo.sh stop     stop all three
+#   scripts/run_demo.sh restart-brain   restart only the brain (after changing .env); the link stays the same
 #
 # The tunnel is a Cloudflare quick tunnel: no account needed, public, and its address is new every
 # time it starts. `start` writes that address into TUNNEL_HOST in the root .env, then builds the web
@@ -92,10 +93,20 @@ stop() {
   done
 }
 
+restart_brain() {
+  if alive brain; then kill "$(cat "$RUN/brain.pid")" 2>/dev/null; sleep 2; fi
+  rm -f "$RUN/brain.pid"
+  PY="$ROOT/brain/.venv/bin/uvicorn"; [ -x "$PY" ] || PY=uvicorn
+  (cd "$ROOT/brain" || exit 1; nohup "$PY" main:app --host 127.0.0.1 --port $BRAIN_PORT > "$RUN/brain.log" 2>&1 < /dev/null & echo $! > "$RUN/brain.pid")
+  n=0; while [ "$(answers "http://127.0.0.1:$BRAIN_PORT/api/trace")" != "200" ] && [ $n -lt 20 ]; do sleep 1; n=$((n + 1)); done
+  echo "brain restarted (pid $(cat "$RUN/brain.pid")); it answers: $(answers "http://127.0.0.1:$BRAIN_PORT/api/trace")"
+}
+
 case "${1:-status}" in
   start) start ;;
+  restart-brain) restart_brain ;;
   status) status ;;
   link) link ;;
   stop) stop ;;
-  *) echo "usage: scripts/run_demo.sh start|status|link|stop"; exit 1 ;;
+  *) echo "usage: scripts/run_demo.sh start|status|link|stop|restart-brain"; exit 1 ;;
 esac
