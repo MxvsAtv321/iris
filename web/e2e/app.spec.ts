@@ -31,3 +31,13 @@ test('mobile demo is clearly labeled and does not overflow', async ({ page }) =>
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   await page.screenshot({ path: 'test-results/phone-mobile.png', fullPage: true })
 })
+
+test('opening the garden never starts a session, so it cannot take the glasses from the judge wearing them', async ({ page }) => {
+  const started: string[] = []
+  page.on('request', request => { if (request.url().includes('/api/session')) started.push(request.method()) })
+  await page.goto('/garden?session=judge-02')
+  await page.waitForTimeout(1500)
+  expect(started).toEqual([])
+  await page.goto('/phone')
+  await expect.poll(() => started.length).toBeGreaterThan(0)   // the phone page is the one that starts it
+})

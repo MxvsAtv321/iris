@@ -545,7 +545,6 @@ async def ask(q: AskIn):
     mode, question = prompts.pick_mode(q.text)
     s, g = session(sid), gates[sid]
     g.hold()
-    asking += 1
     bg(eye("thinking"))            # the eye thinks while the model works; it opens first if the wake word didn't
     out, first_ms, shown, sources, said, spoken_parts, shot_info = "", None, False, [], "", 0, {}
     # Every step's time in ms from the question arriving; `wake` and `listen` are the phone's own measurements.
@@ -576,7 +575,8 @@ async def ask(q: AskIn):
     live_task = asyncio.create_task(live.note(question, http)) if live.topics(question) else None
     if live_task and mode == "ask" and not prompts.DEICTIC.search(question):
         mode = "live"   # answered from live data alone: no photo to wait for or upload
-    try:
+    asking += 1         # counted only where the `finally` below is certain to take it back: a count
+    try:                # left behind would keep the watch loop skipping every frame as "question in progress"
         async with asyncio.timeout(ASK_TIMEOUT_S):
             memo = await memo_task if memo_task else ""
             live_note, sources = await live_task if live_task else ("", [])
