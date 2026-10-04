@@ -151,7 +151,7 @@ Every `decision` carries `trace`: how Iris got to that verdict. All keys are alw
   "rules": [
     { "rule": "cooldown", "outcome": "blocked", "detail": "nudged about 'whiteboard-math' 20 s ago; one per 120 s" },
     { "rule": "repeat", "outcome": "blocked", "similarity": 0.86, "threshold": 0.6, "detail": "already said 'Line 2 says ...'" },
-    { "rule": "quiet_after_answer", "outcome": "passed", "detail": "no answer in the last 10 s" },
+    { "rule": "quiet_after_answer", "outcome": "passed", "detail": "no question in the last 10 s" },
     { "rule": "rate_limit", "outcome": "passed", "detail": "nothing spoken in the last 15 s" }
   ],
   "blocked_by": "cooldown",
@@ -165,7 +165,7 @@ Every `decision` carries `trace`: how Iris got to that verdict. All keys are alw
 - `change` is how different the frame is from the last one judged, against the threshold that triggers a look; `null` on the first frame of a session.
 - `saw` is the model's description, `why` its reason for the urgency, `model` the model that answered (the backup's name if the watch model failed). `candidate` is the line the model had ready, kept here even when Iris stayed silent, so the dashboard can show what was held back. The top-level `text` and `speak` stay empty unless the line was actually shown or spoken.
 - `urgency` is 0 to 10, or `null` when the frame wasn't looked at or the reply couldn't be read. `proposed` is the level that urgency asks for on its own: `speak` at `speak_at`, `display` at `display_at`, otherwise `silent`.
-- `rules` are the gate's four rules in the order it checks them. `outcome` is `passed`, `blocked`, `softened` (only `rate_limit`: spoken too recently, so the line is shown instead) or `not_checked` (urgency was under `display_at`, so there was nothing to hold back). Every rule is worked out even after one blocks; `blocked_by` names the first that blocked, which is the one that decided, or is `null`. `repeat` also carries its `similarity` and `threshold`. `detail` is a plain phrase to show as it is. `rules` is empty when the frame wasn't looked at.
+- `rules` are the gate's four rules in the order it checks them. `outcome` is `passed`, `blocked`, `softened` (only `rate_limit`: spoken too recently, so the line is shown instead) or `not_checked` (urgency was under `display_at`, so there was nothing to hold back). Every rule is worked out even after one blocks; `blocked_by` names the first that blocked, which is the one that decided, or is `null`. `repeat` also carries its `similarity` and `threshold`. `quiet_after_answer` covers the 10 s after a question is asked or answered, or the wake word is heard. `detail` is a plain phrase to show as it is. `rules` is empty when the frame wasn't looked at.
 - `verdict` is the same as the decision's `level`.
 - `latency_ms`: `capture` is the camera request, `model` the vision call, `gate` the rules, `total` the whole tick. `model` and `gate` are missing when the frame wasn't looked at.
 

@@ -7,7 +7,7 @@ const ago = (seconds: number) => new Date(Date.now() - seconds * 1000).toISOStri
 const rules = (blocked?: string) => [
   { rule: 'cooldown', outcome: blocked === 'cooldown' ? 'blocked' : 'passed', detail: blocked === 'cooldown' ? "nudged about 'whiteboard-math' 20 s ago; one per 120 s" : "no nudge about 'whiteboard-math' in the last 120 s" },
   { rule: 'repeat', outcome: blocked ? 'blocked' : 'passed', similarity: blocked ? 0.86 : 0, threshold: 0.6, detail: blocked ? "already said 'Line 2 says seven times eight is fifty-four. It is fifty-six.'" : 'not said in the last 5 minutes' },
-  { rule: 'quiet_after_answer', outcome: 'passed', detail: 'no answer in the last 10 s' },
+  { rule: 'quiet_after_answer', outcome: 'passed', detail: 'no question in the last 10 s' },
   { rule: 'rate_limit', outcome: 'passed', detail: 'nothing spoken in the last 15 s' },
 ]
 let frames = 0

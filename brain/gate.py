@@ -114,9 +114,9 @@ class Gate:
 
         since = now - self.held_at
         if since < QUIET_AFTER_ANSWER_S:
-            quiet.update(outcome="blocked", detail=f"answered a question {since:.0f} s ago; quiet for {QUIET_AFTER_ANSWER_S} s")
+            quiet.update(outcome="blocked", detail=f"the wearer spoke to Iris {since:.0f} s ago; quiet for {QUIET_AFTER_ANSWER_S} s")
         else:
-            quiet.update(outcome="passed", detail=f"no answer in the last {QUIET_AFTER_ANSWER_S} s")
+            quiet.update(outcome="passed", detail=f"no question in the last {QUIET_AFTER_ANSWER_S} s")
 
         softened = level == "speak" and now - self.last["speak"] < SPEAK_GAP_S
         since = now - self.last["display"]
