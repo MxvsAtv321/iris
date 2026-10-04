@@ -348,8 +348,9 @@ app.post("/search", async (c) => {
     const shape = (r: Candidate) => ({ ...r, ...momentUrls(base, r.id, sessionId) });
 
     // Log it so the VR garden can follow questions asked anywhere. Never fails the search.
+    // `quiet` is the brain looking something up for itself: nobody asked, so the garden shouldn't react.
     let searchId: number | null = null;
-    try {
+    if (body.quiet !== true) try {
       const logged = await pool.query<{ id: number }>(
         "INSERT INTO memory_searches (session_id, question, target, moment_id) VALUES ($1, $2, $3, $4) RETURNING id",
         [sessionId, question, target, best?.id ?? null],

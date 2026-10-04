@@ -14,6 +14,8 @@ export type Trace = {
   urgency: number | null; display_at: number; speak_at: number; proposed: Level
   rules: Rule[]; blocked_by: RuleName | null; verdict: Level
   latency_ms: { capture?: number; model?: number; gate?: number; total?: number }
+  /** Thinking ahead: the wearer is heading out and this thing was last seen resting somewhere. The nudge is about it. */
+  ahead: { item: string; place: string; seen: string; at: string } | null
 }
 export type Decision = IrisEvent & { type: 'decision'; level: Level; text: string; reason: string; trace: Trace }
 /** How long each step of a question took, in ms from the question reaching the brain. `wake` and `listen` are the
@@ -62,6 +64,7 @@ function traceOf(event: IrisEvent): Trace {
     blocked_by: t.blocked_by ?? null,
     verdict: event.level ?? 'silent',
     latency_ms: object(t.latency_ms) ? t.latency_ms : {},
+    ahead: object(t.ahead) && typeof t.ahead.item === 'string' && typeof t.ahead.place === 'string' ? t.ahead : null,
   }
 }
 
@@ -205,6 +208,12 @@ function sentence(text: string, capital = true): string {
   const s = text.trim()
   if (!s) return ''
   return (capital ? s[0].toUpperCase() + s.slice(1) : s) + (/[.!?]$/.test(s) ? '' : '.')
+}
+
+/** "Thinking ahead: the phone was last seen on the table, at 19:02." Empty when this moment wasn't about leaving something. */
+export function aheadLine(t: Trace): string {
+  if (!t.ahead) return ''
+  return `Thinking ahead: the ${t.ahead.item} ${t.ahead.item.endsWith('s') ? 'were' : 'was'} last seen on the ${t.ahead.place}${t.ahead.at ? `, at ${t.ahead.at}` : ''}.`
 }
 
 export function ms(n: number | undefined): string {
