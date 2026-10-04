@@ -75,7 +75,7 @@ export function growTree(seed = 7, slotCount = SLOTS): Tree {
   // ---------------------------------------------------------------- by hand
 
   // The trunk: short, massive, flaring at the base and swelling where it splits.
-  const trunkRadii = [4.3, 3.5, 3.05, 2.85, 2.85, 3.0];
+  const trunkRadii = [5.0, 4.0, 3.35, 3.05, 3.0, 3.15];
   let top = -1;
   for (let y = 0; y <= TRUNK_TOP; y++) top = add([wobble(0.15), y, wobble(0.15)], top, trunkRadii[y]);
 
@@ -116,13 +116,13 @@ export function growTree(seed = 7, slotCount = SLOTS): Tree {
   const ROOTS = 9;
   for (let i = 0; i < ROOTS; i++) {
     let angle = (i / ROOTS) * Math.PI * 2 + wobble(0.25);
-    const reach = 6 + rand() * 3.5;
+    const reach = 7 + rand() * 3.5;
     let at = 1;
     for (let s = 1; s <= 7; s++) {
       const t = s / 7;
       angle += wobble(0.12);
       const d = 2.2 + reach * t;
-      at = add([Math.cos(angle) * d, 1.9 * Math.exp(-2.6 * t) - 0.9 * t * t + wobble(0.08), Math.sin(angle) * d], at, 1.5 * (1 - t) + 0.2 * t, false);
+      at = add([Math.cos(angle) * d, 2.3 * Math.exp(-2.4 * t) - 0.9 * t * t + wobble(0.08), Math.sin(angle) * d], at, 2.1 * (1 - t) * (1 - t) + 0.22, false);
     }
   }
 

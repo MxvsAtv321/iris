@@ -18,7 +18,7 @@ import { Wood } from "./Wood";
 import { leafCenter } from "./places";
 
 /** Where the view rests: low, across the pool, looking up into the crown. */
-export const HOME = { target: [0, 9.6, 0] as const, distance: 42, height: 4.4, fov: 42 };
+export const HOME = { target: [0, 9.3, 0] as const, distance: 40, height: 4.2, fov: 42 };
 
 const ORBIT_SPEED = 0.28; // one turn of the tree takes about three and a half minutes
 const REACH_PX = 20; // how close the pointer has to be to a leaf to point at it
@@ -240,7 +240,7 @@ export function TreeScene({ canopy, focusId, foundId, cardboard, standing, onHov
             onPick={onPick}
           />
           <EffectComposer multisampling={0}>
-            <Bloom mipmapBlur intensity={0.9} luminanceThreshold={0.4} luminanceSmoothing={0.35} radius={0.8} />
+            <Bloom mipmapBlur intensity={0.75} luminanceThreshold={0.5} luminanceSmoothing={0.3} radius={0.75} />
             <Vignette offset={0.26} darkness={0.74} />
           </EffectComposer>
         </>

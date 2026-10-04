@@ -50,7 +50,7 @@ const vertexShader = /* glsl */ `
     float size = aLeaf.x * grown * (1.0 + 0.35 * vHot);
 
     // How deep inside the crown this leaf is: 1 by the limbs, 0 at the outer edge.
-    vInner = 1.0 - smoothstep(0.45, 0.95, length((aPos - vec3(0.0, 12.5, 0.0)) / vec3(23.0, 8.0, 18.0)));
+    vInner = 1.0 - smoothstep(0.35, 0.9, length((aPos - vec3(0.0, 12.5, 0.0)) / vec3(23.0, 8.0, 18.0)));
     vUv = uv;
     vKind = kind;
     vSeed = seed;
@@ -99,15 +99,15 @@ const fragmentShader = /* glsl */ `
       vec3 tex = texture2D(uLeaf, vUv).rgb;
       float body = max(tex.r, max(tex.g, tex.b));
       // 0 standing foliage, 1 stayed silent, 2 showed a line, 3 spoke
-      float bright = vKind < 0.5 ? 0.46 : vKind < 1.5 ? 0.62 : vKind < 2.5 ? 1.25 : 2.1;
-      vec3 violet = mix(vec3(0.34, 0.16, 1.0), vec3(0.62, 0.26, 0.95), vSeed);
+      float bright = vKind < 0.5 ? 0.52 : vKind < 1.5 ? 0.66 : vKind < 2.5 ? 1.25 : 2.1;
+      vec3 violet = mix(vec3(0.30, 0.12, 1.0), vec3(0.58, 0.20, 0.95), vSeed);
       // Deep in the crown the leaves catch the gold light of the wood and the blossoms.
       if (vKind < 1.5) {
-        violet = mix(violet, vec3(1.0, 0.62, 0.36), vInner * 0.5);
-        bright *= 1.0 + vInner * 0.9;
+        violet = mix(violet, vec3(1.0, 0.58, 0.30), vInner * 0.55);
+        bright *= 1.0 + vInner * 0.7;
       }
       if (vKind < 1.5) violet = mix(violet, vec3(0.72, 0.70, 0.95), 0.45); // faint leaves are frosted, not vivid
-      vec3 cool = mix(violet * body * body, tex, vKind > 1.5 ? 0.55 : 0.12) * bright;
+      vec3 cool = mix(violet * body * body, tex, vKind > 1.5 ? 0.55 : 0.10) * bright;
       vec3 gold = vec3(1.0, 0.70, 0.30) * body * 3.2;
       col = mix(cool, gold, vWarm);
       // Shimmer: every leaf breathes a little, and now and then one catches the light.

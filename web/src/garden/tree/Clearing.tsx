@@ -149,10 +149,10 @@ const glowFragment = /* glsl */ `
 
 // The light the tree gives off into the air around it: gold from the wood, violet from the crown.
 const GLOWS: [x: number, y: number, z: number, size: number, r: number, g: number, b: number, strength: number][] = [
-  [0, 6.5, 0, 22, 1.0, 0.62, 0.3, 0.11],
-  [-7, 10, 1, 18, 1.0, 0.66, 0.36, 0.08],
-  [7, 10.5, -1.5, 18, 1.0, 0.66, 0.36, 0.08],
-  [0, 1.5, 0, 20, 1.0, 0.6, 0.32, 0.1],
+  [0, 7.5, 0, 24, 1.0, 0.60, 0.28, 0.08],
+  [-8, 10.5, 1, 20, 1.0, 0.62, 0.32, 0.06],
+  [8, 11, -1.5, 20, 1.0, 0.62, 0.32, 0.06],
+  [0, 1.5, 0, 20, 1.0, 0.6, 0.32, 0.07],
   [0, 13, 0, 58, 0.5, 0.3, 1.0, 0.055],
 ];
 
@@ -293,7 +293,7 @@ const mistVertex = /* glsl */ `
     float angle = aPuff.x + uTime * aDrift.x;
     float dist = aPuff.y + sin(uTime * 0.05 + aDrift.y * 20.0) * 1.5;
     vec3 center = vec3(cos(angle) * dist, aPuff.z + sin(uTime * 0.11 + aDrift.y * 9.0) * 0.3, sin(angle) * dist);
-    vWarm = smoothstep(14.0, 3.0, dist);
+    vWarm = 1.0 - smoothstep(3.0, 16.0, dist);
     vec4 mv = modelViewMatrix * vec4(center, 1.0);
     mv.xy += position.xy * aPuff.w * vec2(1.0, 0.42);
     gl_Position = projectionMatrix * mv;
@@ -309,7 +309,7 @@ const mistFragment = /* glsl */ `
     float soft = smoothstep(0.5, 0.0, length(p));
     soft *= soft * (0.75 + 0.25 * sin(p.x * 9.0 + uTime * 0.2 + vSeed * 30.0));
     vec3 col = mix(vec3(0.42, 0.36, 0.72), vec3(0.95, 0.72, 0.55), vWarm * 0.7);
-    gl_FragColor = vec4(col * soft * 0.05, 1.0);
+    gl_FragColor = vec4(col * soft * 0.034, 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
   }
@@ -329,7 +329,7 @@ function Mist() {
     const rand = seeded(11);
     for (let i = 0; i < count; i++) {
       const dist = 3 + rand() * rand() * 30;
-      puff.set([rand() * Math.PI * 2, dist, 0.6 + rand() * 2.2, 13 + rand() * 15], i * 4);
+      puff.set([rand() * Math.PI * 2, dist, 0.3 + rand() * 1.5, 12 + rand() * 13], i * 4);
       drift.set([(rand() - 0.5) * 0.02, rand()], i * 2);
     }
     g.setAttribute("aPuff", new THREE.InstancedBufferAttribute(puff, 4));
@@ -427,7 +427,7 @@ export function Clearing({ onScreen }: { onScreen: boolean }) {
   return (
     <>
       <color attach="background" args={[NIGHT]} />
-      <fog attach="fog" args={[HAZE, 55, 190]} />
+      <fog attach="fog" args={[HAZE, 60, 210]} />
       <ambientLight intensity={0.05} color="#8f86c8" />
       <pointLight position={[0, 13, 0]} color="#b79cff" intensity={900} distance={160} decay={2} />
       <pointLight position={[0, 3.2, 0]} color="#ffb362" intensity={420} distance={70} decay={2} />

@@ -60,15 +60,15 @@ const fragmentShader = /* glsl */ `
 
     // The crown lights the wood from above in violet, the blossoms from all around in gold.
     vec3 wood = mix(bark, vec3(lum), 0.25);
-    vec3 lit = wood * (vec3(0.55, 0.45, 0.85) * (0.2 + 0.55 * (N.y * 0.5 + 0.5)) + vec3(1.0, 0.72, 0.42) * 0.4);
+    vec3 lit = wood * (vec3(0.55, 0.45, 0.85) * (0.12 + 0.4 * (N.y * 0.5 + 0.5)) + vec3(1.0, 0.72, 0.42) * 0.3);
     lit += vec3(0.60, 0.45, 0.95) * rim * 0.16;
-    lit += vec3(1.0, 0.74, 0.45) * (1.0 - thick) * 0.04; // thin branches sit among the leaves
+    lit += vec3(1.0, 0.66, 0.34) * (1.0 - thick) * 0.05; // thin branches sit among the leaves
 
     float flow = 0.62 + 0.38 * sin(vAlong * 0.7 - uTime * 0.9 + sin(vPosW.x * 0.7 + vPosW.z * 0.9) * 1.5);
     // A blurred copy of the bark spreads each crack's light onto the wood around it.
     vec3 soft = texture2D(uBark, vUv, 3.5).rgb;
-    float halo = smoothstep(0.02, 0.22, soft.r - soft.b);
-    vec3 glow = vec3(1.0, 0.64, 0.24) * (vein * (0.6 + 6.0 * thick) + halo * 0.5 * thick) * flow;
+    float halo = smoothstep(0.15, 0.36, soft.r - soft.b);
+    vec3 glow = vec3(1.0, 0.64, 0.24) * (vein * (0.6 + 6.0 * thick) + halo * 0.6 * thick) * flow;
 
     gl_FragColor = vec4((lit + glow) * (1.0 - 0.45 * uReflection), 1.0);
     #include <tonemapping_fragment>

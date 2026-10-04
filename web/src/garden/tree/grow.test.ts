@@ -17,7 +17,7 @@ describe('growTree', () => {
   it('has a massive trunk that starts at the ground', () => {
     const trunk = tree.chains[0]
     expect(trunk.points[0][1]).toBe(0)
-    expect(trunk.radii[0]).toBeGreaterThan(4)
+    expect(trunk.radii[0]).toBeGreaterThan(4.5)
   })
 
   it('spreads a crown far wider than it is tall', () => {
