@@ -143,8 +143,8 @@ def placement():
 
 
 @app.get("/test")
-async def test():
-    state.update(shown="[test pattern]", shown_at=time.time())
+async def test(grid: int = 0):
+    state.update(shown="[grid]" if grid else "[test pattern]", shown_at=time.time())
     return PlainTextResponse("ok")
 
 

@@ -46,6 +46,7 @@ The same rule is in `brain/hud_text.py`, which the brain uses to keep its lines 
 Only part of the screen may be visible through the lens. `/test` shows which: the border, the crosshair and the corner labels are fixed to the screen, and the dashed box is where text and the eye are drawn. Move the box into view with `/calibrate`; it is saved on the board:
 
     curl http://172.20.10.6/test
+    curl "http://172.20.10.6/test?grid=1"             # labels A1..C7, 16 pixels apart: which ones can you read?
     curl "http://172.20.10.6/calibrate?x=10&y=-6"     # 10 right, 6 up, as the wearer reads
     curl "http://172.20.10.6/calibrate?w=100&h=44"    # optional: a smaller area, if the dashed box's edges are out of view
     curl "http://172.20.10.6/calibrate?x=0&y=0&w=116&h=52"   # back to the start

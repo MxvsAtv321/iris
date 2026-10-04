@@ -14,6 +14,7 @@
 // Text is drawn in a bold sans, centred, at the largest size that fits (the rule is shared with brain/hud_text.py).
 // See which part of the screen the lens shows, then move everything into it (saved on the board, no re-flash):
 //   curl http://glasses-hud.local/test                       border, crosshair, TL TR BL BR, and the content area (dashed)
+//   curl "http://glasses-hud.local/test?grid=1"              a grid of labels A1..C7, to read off how much of the screen is visible
 //   curl "http://glasses-hud.local/calibrate?x=10&y=-6"      +x moves right, +y moves down, as the wearer reads
 //   curl "http://glasses-hud.local/calibrate?w=100&h=44"     optional: make the content area smaller or larger
 //   curl "http://glasses-hud.local/calibrate?flip_h=0&flip_v=1"   mirror left-right or top-bottom, for the way the lens shows it
@@ -582,9 +583,30 @@ String placementJson() {
          ",\"boost\":" + String(boost ? 1 : 0);
 }
 
+// A grid of labels over the whole screen, 16 pixels apart: A1 to A7 along the top, then rows B and C. The labels
+// the wearer can read say exactly which part of the screen the lens shows. Nothing here moves with the offset.
+void drawGrid() {
+  display.clearDisplay();
+  display.setFont();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextWrap(false);
+  display.drawRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, SSD1306_WHITE);
+  for (int row = 1; row <= 3; row++) {
+    for (int col = 1; col <= 7; col++) {
+      display.setCursor(16 * col - 6, 16 * row - 4);      // the label's middle is at x = 16 * col, y = 16 * row
+      display.print((char)('A' + row - 1));
+      display.print((char)('0' + col));
+    }
+  }
+  fullBrightness();
+  display.display();
+}
+
 void handleTest() {
   planClear();
-  drawTest();
+  if (server.hasArg("grid")) drawGrid();
+  else drawTest();
   eyeOpen = false;
   sendOk();
 }
