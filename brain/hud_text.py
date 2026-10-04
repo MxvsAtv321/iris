@@ -159,11 +159,14 @@ def display(text):
     while len(words) > 1 and (size_of(" ".join(words)) < aim or words[-1].lower().strip(",.;:") in DANGLING):
         words.pop()
     short = _tidy(" ".join(words))
-    if size_of(short):
+    says_something = any(w.lower().strip(",.;:") not in DANGLING for w in short.split(" "))
+    if size_of(short) and says_something:
         return short
-    whole = _small(lean)                     # no bold size holds even one word: small, but every word whole
+    whole = _small(lean)                     # no bold size holds a word that says anything: small, but every word whole
     if whole:
         return whole
+    if size_of(short):
+        return short
     while short and not size_of(short):      # one word wider than the display at any size: its start is all that fits
         short = short[:-1]
     return short
@@ -218,6 +221,7 @@ if __name__ == "__main__":
     assert display("Stay in") == "Stay in" and display("Step down") == "Step down"
     assert display("Phone's on table") == "Phone's on table" and fit("Phone's on table") is None     # the small font shows it
     assert display("Laptop") == "Laptop" and display("Stove on") == "Stove on"
+    assert display("By laptop") == "By laptop" and display("Take umbrella") == "Take"      # never just "By"
     assert "at most 2 words, each at most 4 characters" in hint()
     assert set_area(*DEFAULT_AREA) and fit("Stay in")[0] == 18 and hint() == ""
     print("hud_text ok")
