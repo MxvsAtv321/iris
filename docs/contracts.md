@@ -8,7 +8,8 @@ Everyone builds against these shapes. The owner may change their contract: updat
 | --- | --- |
 | `GET http://172.20.10.4/capture` | One JPEG from the glasses camera (about 0.2 s at 800x600). |
 | `GET http://172.20.10.4/control?var=<name>&val=<n>` | Changes one camera setting until the camera restarts. The brain sends `framesize` 11 (800x600), `vflip` 0 and `hmirror` 1 at startup and at every session start, from `CAMERA_FRAMESIZE`, `CAMERA_VFLIP` and `CAMERA_HMIRROR`. |
-| `GET http://172.20.10.4/status` | The camera's current settings as JSON. |
+| `GET http://172.20.10.4/status` | The camera's current settings as JSON. With the firmware in `firmware/glasses_cam/` it also has `temp_c`, the chip's temperature in Celsius. |
+| `GET http://172.20.10.4:81/stream` | Live video as MJPEG (`multipart/x-mixed-replace`, each part a JPEG with its `Content-Length`). **One viewer at a time, and that viewer is the brain.** Everything else watches through the brain's `/api/stream`. |
 | `GET http://172.20.10.6/show?text=<url-encoded text>` | Shows the text on the glasses display. Under 40 characters stays in the large font. Returns `ok`. The text stays until it is replaced or cleared. |
 | `GET http://172.20.10.6/show?text=...&eye=answer&hold=<ms>` | The eye blinks, the text shows for `hold` ms (default 4000), then the eye rests open for about 3 s and closes. The eye opens first if it is shut. |
 | `GET http://172.20.10.6/show?text=...&eye=nudge&hold=<ms>` | The eye flicks open and blinks, the text shows for `hold` ms (default 5000), then the display goes dark. |
@@ -64,6 +65,12 @@ The live data a question would get, for testing and the dashboard: `{ "topics": 
 ### `GET /api/scene`
 
 What the glasses have just seen, for the Act agent: `{ "session_id": "judge-01" | null, "recently_seen": ["19:02 a protein bar on a wooden table"], "already_said": [] }`. `session_id` is null when no session is running.
+
+### `GET /api/stream`
+
+What the glasses see, as live video: MJPEG (`multipart/x-mixed-replace; boundary=frame`), which an `<img>` plays as it is. The brain reads the camera's stream as its only viewer, keeps the newest frame for the watch loop and for questions, and passes the frames on here, so any number of dashboards can watch. A slow viewer skips frames. If the camera's stream stops, the brain reconnects by itself and meanwhile takes single frames from `/capture` when it needs one; this route then keeps working at that pace (one frame every 2 s while a session runs).
+
+Every frame the brain hands out, here and everywhere else, has been turned upright by `CAMERA_ROTATE` (0, 90, 180 or 270 degrees clockwise, in `.env`).
 
 ### `GET /api/frame`, `GET /api/frame/{frame_id}`
 
@@ -141,7 +148,8 @@ One JSON message per event. Every message has `type`, `session_id` and `at` (ISO
   "gate_precision": 0.9, "gate_accuracy": 0.9, "gate_precision_basis": "measured on 10 test photos",
   "moments_seen": 412, "moments_silent": 404, "moments_shown": 5, "moments_spoken": 3,
   "model_calls_today": 112, "model_usd_today": 0.41,
-  "ask_model": "xai:grok-4.20-non-reasoning", "watch_model": "xai:grok-4.20-reasoning" }
+  "ask_model": "xai:grok-4.20-non-reasoning", "watch_model": "xai:grok-4.20-reasoning",
+  "camera_source": "stream", "camera_fps": 11.5 }
 ```
 
 - Every gate call emits a `decision`, including silent ones, so the dashboard can show what Iris chose not to say.
@@ -157,6 +165,7 @@ One JSON message per event. Every message has `type`, `session_id` and `at` (ISO
 - `speech` is one part of an answer's spoken line, sent as soon as the words exist: the first sentence while the rest is still being written, then the remainder (`seq` 0, then 1). The parts joined with a space are the `answer`'s `speak`. The brain is already fetching the audio when the event goes out.
 - `answer.trace` is where the question's time went. `latency_ms` is in ms from the question reaching the brain: `context` (frame, memory and live data in hand), `first_word` (the model's first text), `display` (the glasses confirmed the line), `speech` (the first audio bytes reached the brain), `total` (the answer complete). `wake` and `listen` are the phone's `wake_ms` and `listen_ms`. `first_audio` is the phone's report to `/api/timing`. A step is missing when it didn't happen (no display, no voice). `frame` is the photo the answer used: `source` is `recent` (already in hand, `age_ms` old) or `fresh` (taken for this question); `null` when the answer used no photo. `mode` is `ask`, `identify`, `read`, `recall` or `live`; `mode_by` is `rules`, or `jev` when the brain runs with `JEV_GATE=1` and Jev picked it (`latency_ms.mode` is then how long that took).
 - `answer_timing` carries the whole `latency_ms` again whenever a step finishes after the `answer` went out (usually `display`, `speech` or `first_audio`). Replace the answer's `trace.latency_ms` with it.
+- `camera_source` is `stream` while the camera's video stream is delivering and `capture` while the brain is taking single frames instead; `camera_fps` is the stream's frame rate over the last 3 s (0 when it is down).
 - `first_audio_ms_p50` is the median of the phones' `first_audio` reports; `null` until one arrives.
 
 ### Decision trace

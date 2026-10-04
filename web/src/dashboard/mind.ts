@@ -30,6 +30,7 @@ export type MindEvent = Decision | AnswerEvent
 export type Metrics = {
   answer_latency_ms_p50?: number | null; gate_accuracy?: number | null; gate_precision?: number | null
   gate_precision_basis?: string | null; watch_model?: string
+  camera_source?: 'stream' | 'capture'; camera_fps?: number   // live video from the camera's stream, or single frames while it is down
   moments_seen?: number; moments_silent?: number; moments_shown?: number; moments_spoken?: number
 }
 export type Tally = { silent: number; display: number; speak: number }
@@ -219,6 +220,13 @@ export function jevLine(t: Trace): string {
   if (!t.jev) return ''
   const own = typeof t.jev.watch_urgency === 'number' && t.jev.watch_urgency !== t.urgency ? ` The vision model alone said urgency ${t.jev.watch_urgency}.` : ''
   return `Jev: ${Math.round(t.jev.probability * 100)}% worth interrupting.${own}`
+}
+
+/** What a live picture's caption says: the frame rate while the camera's stream runs, and plainly when it doesn't. */
+export function liveCaption(metrics: Metrics | null): string {
+  if (metrics?.camera_source === 'stream') return metrics.camera_fps ? `Live, ${Math.round(metrics.camera_fps)} frames a second` : 'Live'
+  if (metrics?.camera_source === 'capture') return 'Live, one frame every 2 s. The camera’s video stream is down.'
+  return 'Live'
 }
 
 /** "Thinking ahead: the phone was last seen on the table, at 19:02." Empty when this moment wasn't about leaving something. */

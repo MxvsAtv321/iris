@@ -6,7 +6,8 @@ real boards: a capture takes about 0.17 s and one at a time, a display call abou
 
     brain/.venv/bin/python scripts/fake_glasses.py --port 8041 [--image photo.jpg]
 
-Then run the brain with CAMERA_URL=http://127.0.0.1:8041 HUD_URL=http://127.0.0.1:8041.
+Then run the brain with CAMERA_URL=http://127.0.0.1:8041 HUD_URL=http://127.0.0.1:8041
+CAMERA_STREAM_URL=http://127.0.0.1:8041/stream (the stream is on the same port here; /stall?s=8 pauses it).
 Without --image it serves a drawn product card, so questions have something to read.
 """
 import argparse
@@ -16,10 +17,10 @@ import time
 
 import uvicorn
 from fastapi import FastAPI
-from fastapi.responses import PlainTextResponse, Response
+from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 from PIL import Image, ImageDraw, ImageFont
 
-CAPTURE_S, DISPLAY_S = 0.17, 0.05
+CAPTURE_S, DISPLAY_S, STREAM_FPS = 0.17, 0.05, 12.0
 app = FastAPI()
 camera = asyncio.Lock()          # the ESP32 serves one request at a time
 state = {"jpeg": b"", "shown": "", "eye": "closed", "frames": 0, "settings": {"framesize": 11, "vflip": 0, "hmirror": 1}}
@@ -68,6 +69,42 @@ async def capture():
 async def restart():
     """What a power cycle does to the real board: back to its small, upside-down defaults."""
     state["settings"].update(framesize=6, vflip=1, hmirror=0)
+    return PlainTextResponse("ok")
+
+
+def numbered(n):
+    """The frame with a moving bar on it, so every stream frame is different and a viewer can count them."""
+    img = Image.open(io.BytesIO(state["jpeg"])).convert("RGB")
+    d = ImageDraw.Draw(img)
+    x = (n * 16) % img.width
+    d.rectangle((x, img.height - 14, x + 40, img.height), fill=(255, 220, 120))
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=80)
+    return buf.getvalue()
+
+
+@app.get("/stream")
+async def stream(fps: float = STREAM_FPS):
+    """The MJPEG stream the real board serves on port 81, with the same part headers. /stall pauses it."""
+    async def parts():
+        n = 0
+        while True:
+            if time.time() < state.get("stalled_until", 0):
+                await asyncio.sleep(0.1)
+                continue
+            n += 1
+            state["frames"] += 1
+            jpeg = numbered(n)
+            yield (b"\r\n--123456789000000000000987654321\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n"
+                   b"X-Timestamp: %d.000000\r\n\r\n" % (len(jpeg), int(time.time()))) + jpeg
+            await asyncio.sleep(1 / fps)
+    return StreamingResponse(parts(), media_type="multipart/x-mixed-replace;boundary=123456789000000000000987654321")
+
+
+@app.get("/stall")
+async def stall(s: float = 8.0):
+    """Make the stream go quiet for a while, the way a real one does when the WiFi drops."""
+    state["stalled_until"] = time.time() + s
     return PlainTextResponse("ok")
 
 

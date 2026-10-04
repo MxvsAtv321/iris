@@ -12,6 +12,11 @@ Arduino's built-in CameraWebServer example, configured for the NULLLAB ESP32-S3 
 
 In `glasses_cam.ino`, replace `YOUR_HOTSPOT_PASSWORD` with the hotspot password. Never commit the real one.
 
+## What Iris adds to the stock example
+
+- `/status` also reports `temp_c`, the chip's temperature in Celsius.
+- The stream server (port 81) gives up on a viewer that stops reading after 3 seconds. The stock example lets a vanished viewer hold the stream, and the board serves one viewer at a time, so nobody else gets a frame until TCP times out.
+
 ## Defaults
 
 `setup()` ends the sensor setup with 800x600 frames and an upright image (`FRAMESIZE_SVGA`, `vflip` 0, `hmirror` 1). The stock example starts at 320x240, and on this mount its image is upside down, which makes the vision model misread writing.

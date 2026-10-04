@@ -60,7 +60,7 @@ clients = set()
 gates = defaultdict(gate.Gate)
 latencies = deque(maxlen=50)   # (total_ms, first_word_ms)
 spoken = deque(maxlen=20)      # (ts, text) sent to TTS, for the echo filter
-frame = {"jpeg": b"", "ts": 0.0}
+frame = camera.frame            # the newest frame from the camera's stream or /capture, already upright
 frames = OrderedDict()         # frame_id -> JPEG the loop looked at, for the dashboard; the newest FRAMES_KEPT
 FRAMES_KEPT = 450              # about 15 minutes at one frame per tick
 BOOT = f"{int(time.time()):x}"  # in every frame URL: ids start again when the brain restarts, and browsers cache frames
@@ -155,12 +155,12 @@ healed = {"at": -1e9}
 
 def lost_settings(jpeg):
     """True when the camera is not sending the size it was told to: it has restarted into its defaults,
-    which are also upside down for this mount. Checked on the frame as the camera sent it, before it is turned."""
+    which are also upside down for this mount. A frame turned on its side counts as the same size."""
     want = FRAME_SIZES.get(CAMERA_SETTINGS.get("framesize") or "")
     if not want:
         return False
     try:
-        return Image.open(io.BytesIO(jpeg)).size != want
+        return sorted(Image.open(io.BytesIO(jpeg)).size) != sorted(want)
     except Exception:  # noqa: BLE001 - an unreadable frame says nothing about the settings
         return False
 
@@ -168,18 +168,14 @@ def lost_settings(jpeg):
 async def capture(reuse_s=0.0):
     """One frame from the camera. With reuse_s, a frame someone else took that recently is returned instead:
     the camera serves one request at a time, so a second capture right behind the first is wasted time."""
+    if camera.live():              # the stream is delivering: its newest frame, and nothing asked of the camera
+        return frame["jpeg"]
     async with camera_lock:
         if reuse_s and frame["jpeg"] and time.time() - frame["ts"] < reuse_s:
             return frame["jpeg"]
         r = await http.get(CAMERA + "/capture", timeout=1.5)
-    r.raise_for_status()
-    if lost_settings(r.content) and time.monotonic() - healed["at"] > 15:
-        healed["at"] = time.monotonic()
-        log.warning("the camera restarted (its frames are the wrong size); sending its settings again")
-        bg(setup_camera())
-    jpeg = await asyncio.to_thread(camera.upright, r.content) if camera.ROTATE else r.content
-    frame["jpeg"], frame["ts"] = jpeg, time.time()     # upright before anything else sees it
-    return jpeg
+        r.raise_for_status()
+        return await camera.publish(r.content)
 
 
 async def setup_camera():
@@ -365,6 +361,10 @@ async def tick(sid, fid, trace):
 
     jpeg = await capture()
     lat["capture"] = ms(t0)
+    if lost_settings(jpeg) and time.monotonic() - healed["at"] > 15:      # whether the frame came from the stream or /capture
+        healed["at"] = time.monotonic()
+        log.warning("the camera restarted (its frames are the wrong size); sending its settings again")
+        bg(setup_camera())
     frames[fid] = jpeg
     while len(frames) > FRAMES_KEPT:
         frames.popitem(last=False)
@@ -477,6 +477,8 @@ def metrics():
         model_usd_today=llm.usd_today(),
         ask_model=llm.PRIMARY,
         watch_model=llm.WATCH,
+        camera_source="stream" if camera.live() else "capture",   # live video, or single frames while the stream is down
+        camera_fps=camera.fps(),
     )
 
 
@@ -507,7 +509,8 @@ async def keep_warm_loop():
 
 @asynccontextmanager
 async def lifespan(app):
-    tasks = [asyncio.create_task(watch_loop()), asyncio.create_task(metrics_loop())]
+    tasks = [asyncio.create_task(watch_loop()), asyncio.create_task(metrics_loop()),
+             asyncio.create_task(camera.read_stream(http))]
     if KEEP_WARM_S:
         tasks.append(asyncio.create_task(keep_warm_loop()))
     else:
@@ -757,6 +760,18 @@ async def latest_frame():
     if not frame["jpeg"]:
         return Response(status_code=204)
     return Response(frame["jpeg"], media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/stream")
+async def live_video():
+    """What the glasses see, as live video (MJPEG) for the dashboard. The brain is the camera's only viewer and passes
+    its frames on, so any number of dashboards can watch. While the camera's stream is down this still works, at the
+    pace of the watch loop's single frames."""
+    async def parts():
+        async for jpeg in camera.frames_for_a_viewer():
+            yield camera.multipart(jpeg)
+    return StreamingResponse(parts(), media_type="multipart/x-mixed-replace; boundary=frame",
+                             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
 
 @app.get("/api/frame/{frame_id}")
