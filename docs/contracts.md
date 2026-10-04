@@ -41,6 +41,10 @@ Response:
 
 `level` is one of `silent`, `display`, `speak`. `speak` may be an empty string. Never returns a 500: on failure `display` is "Didn't catch that, try again".
 
+Two optional fields carry what the phone measured before it sent the question, in ms: `wake_ms` (from hearing "Iris") and `listen_ms` (from the mic opening). They only feed the dashboard's timings.
+
+The question uses the newest camera frame the brain holds when it is under 1 s old (from the watch loop or the wake word); otherwise it takes a new one.
+
 ### `POST /api/session`, `DELETE /api/session`
 
 `POST { "session_id": "judge-01" }` makes that session active and starts the watch loop; returns `{ "session_id", "earlier" }` (how many descriptions were carried over from the previous session). `DELETE` stops the loop. Cooldowns reset per session, so every judge gets the nudge.
@@ -48,6 +52,8 @@ Response:
 ### `POST /api/wake`
 
 `POST { "session_id": "judge-01" }` when the phone hears the wake word "Iris". The eye on the glasses opens and listens, and the watch loop holds its nudges for 10 s. Returns `{ "eye": true, "display_ms": 48 }`: whether the display answered, and how long the brain waited for it (at most 1 s). The phone does not need to wait for the reply.
+
+The brain also gets ready for the question: for the next 8 s, or until the question arrives, it keeps a camera frame under a second old and its model and voice connections open. Send `"eye": false` when the mic opens without the wake word: the brain gets ready the same way and leaves the eye alone.
 
 During `/api/ask` the brain drives the eye itself: it thinks while the model works, then blinks and shows the answer. A nudge from the watch loop arrives as a quick blink, then the text.
 
@@ -87,6 +93,14 @@ Request: `{ "text": "Stay in" }`. Puts the text on the glasses display (cut to 4
 
 Streams `audio/mpeg` (ElevenLabs). Returns `204` if speech is unavailable; just show the text.
 
+### `GET /api/tts/{speech_id}`
+
+The audio for one `speech` event (its `audio_url`). The brain starts fetching it the moment it emits the event, so this plays from the start whether the audio has finished arriving or not. `204` when there is no audio; just show the text. The brain keeps the newest 20.
+
+### `POST /api/timing`
+
+`POST { "session_id": "judge-01", "ask_id": "a_0007", "first_audio_ms": 1420 }` when the answer's voice starts playing on the phone: ms on the phone's clock since it sent the question. Returns `{ "ok": true }`, or `false` for an unknown question or a second report. The phone does not need to wait for the reply.
+
 ### `POST /api/transcribe` (draft)
 
 Multipart `audio` (a MediaRecorder clip) and `session_id`. Returns `{ "text": "...", "dropped_as_echo": false }`. Empty `text` means don't ask: either nothing was heard, or it was Iris's own voice coming back through the mic. Then call `/api/ask` with the text.
@@ -107,13 +121,21 @@ One JSON message per event. Every message has `type`, `session_id` and `at` (ISO
 { "type": "answer", "session_id": "judge-01", "at": "...", "ask_id": "a_0007",
   "question": "how much protein is in this?", "display": "12g protein per bar",
   "speak": "That bar has about 12 grams of protein.", "latency_ms": 1840, "first_word_ms": 620,
-  "context": [] }
+  "context": [],
+  "trace": { "mode": "ask", "frame": { "source": "recent", "age_ms": 420 },
+             "latency_ms": { "wake": 2140, "listen": 3050, "context": 4, "first_word": 620, "display": 910, "speech": 1180, "total": 1840 } } }
+
+{ "type": "speech", "session_id": "judge-01", "at": "...", "ask_id": "a_0007", "seq": 0,
+  "text": "That bar has about 12 grams of protein.", "audio_url": "/api/tts/s_0012" }
+
+{ "type": "answer_timing", "session_id": "judge-01", "at": "...", "ask_id": "a_0007",
+  "latency_ms": { "wake": 2140, "listen": 3050, "context": 4, "first_word": 620, "display": 910, "speech": 1180, "total": 1840, "first_audio": 1420 } }
 
 { "type": "memory_saved", "session_id": "judge-01", "at": "...",
   "moment_id": "m_0192", "description": "a protein bar on a wooden table" }
 
 { "type": "metrics", "session_id": "judge-01", "at": "...",
-  "answer_latency_ms_p50": 1700, "answer_latency_ms_p95": 2400, "first_word_ms_p50": 650,
+  "answer_latency_ms_p50": 1700, "answer_latency_ms_p95": 2400, "first_word_ms_p50": 650, "first_audio_ms_p50": 1400,
   "gate_precision": 0.9, "gate_accuracy": 0.9, "gate_precision_basis": "measured on 10 test photos",
   "moments_seen": 412, "moments_silent": 404, "moments_shown": 5, "moments_spoken": 3,
   "model_calls_today": 112, "model_usd_today": 0.41,
@@ -129,7 +151,11 @@ One JSON message per event. Every message has `type`, `session_id` and `at` (ISO
 - `gate_precision` comes from the bake-off, not live use. Show it with `gate_precision_basis`, e.g. "Gate precision 0.9, measured on test photos". It is `null` until the bake-off has run.
 - `gate_accuracy` is the share of test photos where the gate chose the expected level (the bake-off's `level_agreement` for the watch model). Same basis and same `null` rule as `gate_precision`.
 - `moments_seen` counts every decision in the running session, and `moments_silent` + `moments_shown` + `moments_spoken` add up to it.
-- **Phone audio:** play speech only from WebSocket events. A `decision` with `level: "speak"` means fetch `/api/tts?text=<speak>`; an `answer` with non-empty `speak` means the same. Never play from the `/api/ask` HTTP response, or it plays twice. Unlock audio with a tap at session start, because mobile browsers block autoplay.
+- **Phone audio:** play speech only from WebSocket events. A `decision` with `level: "speak"` means fetch `/api/tts?text=<speak>`. An answer's voice arrives as `speech` events: play each one's `audio_url`, in `seq` order, and then do not also speak the `answer` that follows with the same `ask_id`. An `answer` with non-empty `speak` and no `speech` events before it (a brain with early speech turned off) means fetch `/api/tts?text=<speak>` as before. Never play from the `/api/ask` HTTP response, or it plays twice. Unlock audio with a tap at session start, because mobile browsers block autoplay.
+- `speech` is one part of an answer's spoken line, sent as soon as the words exist: the first sentence while the rest is still being written, then the remainder (`seq` 0, then 1). The parts joined with a space are the `answer`'s `speak`. The brain is already fetching the audio when the event goes out.
+- `answer.trace` is where the question's time went. `latency_ms` is in ms from the question reaching the brain: `context` (frame, memory and live data in hand), `first_word` (the model's first text), `display` (the glasses confirmed the line), `speech` (the first audio bytes reached the brain), `total` (the answer complete). `wake` and `listen` are the phone's `wake_ms` and `listen_ms`. `first_audio` is the phone's report to `/api/timing`. A step is missing when it didn't happen (no display, no voice). `frame` is the photo the answer used: `source` is `recent` (already in hand, `age_ms` old) or `fresh` (taken for this question); `null` when the answer used no photo. `mode` is `ask`, `identify`, `read`, `recall` or `live`.
+- `answer_timing` carries the whole `latency_ms` again whenever a step finishes after the `answer` went out (usually `display`, `speech` or `first_audio`). Replace the answer's `trace.latency_ms` with it.
+- `first_audio_ms_p50` is the median of the phones' `first_audio` reports; `null` until one arrives.
 
 ### Decision trace
 

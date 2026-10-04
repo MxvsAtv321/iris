@@ -93,12 +93,14 @@ def messages(system, text, jpeg=None):
 
 
 async def warm():
-    """Open a pooled connection to each model host, so the first question skips the handshake."""
-    for base in {PROVIDERS[parse(m)[0]][0] for m in (PRIMARY, WATCH, BACKUP)}:
+    """Open (or keep open) a pooled connection to each model host, so no question pays for a handshake.
+    Any reply keeps the connection alive, a 4xx included. Never raises."""
+    async def touch(base):
         try:
             await http.head(base, timeout=3)
         except Exception as e:  # noqa: BLE001
             log.info("warm %s: %s", base, e)
+    await asyncio.gather(*(touch(base) for base in {PROVIDERS[parse(m)[0]][0] for m in (PRIMARY, WATCH, BACKUP)}))
 
 
 def _cost(u):

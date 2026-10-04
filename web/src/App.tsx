@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from 'react'
 import { SafeBoundary } from './garden/SafeBoundary'
 const Garden = lazy(() => import('./garden/Garden').then(module => ({ default: module.Garden })))
-import { ask, startSession, stripWakeWord, wakeEye, type Answer } from './api'
+import { ask, startSession, stripWakeWord, wakeEye, type Answer, type AskMarks } from './api'
 import { useFeed } from './useFeed'
 import { Dashboard } from './dashboard/Dashboard'
 import { speechRecognition, type Recognition } from './voice'
@@ -110,7 +110,7 @@ function Phone({ session, demo, sessionOnline, menu, settingsOpen, onSettings }:
     return () => { disposed = true; void lock?.release(); document.removeEventListener('visibilitychange', acquire) }
   }, [])
   function stopAudio() { speaker.current?.stop(); audioLevel.stop(); setSpeaking(false) }
-  async function submit(text: string) {
+  async function submit(text: string, marks: AskMarks = {}) {
     const clean = text.trim()
     if (!clean || request.current) return
     stopAudio(); setQuestion(clean); setError(''); setVoiceNote(''); setAnswer(null); setLatency(null); setPhase('thinking')
@@ -124,7 +124,7 @@ function Phone({ session, demo, sessionOnline, menu, settingsOpen, onSettings }:
         await new Promise<void>(resolve => { demoTimer.current = setTimeout(resolve, 900); controller.signal.addEventListener('abort', () => { clearTimeout(demoTimer.current); resolve() }, { once: true }) })
         if (controller.signal.aborted) return
         result = { display: 'Demo: 12g protein per bar', speak: 'This is a scripted demo answer: twelve grams of protein per bar. Connect the brain to ask about what you are actually seeing.', level: 'speak', latency_ms: 900 }
-      } else result = await ask(session, clean, controller.signal)
+      } else { speaker.current?.expect(started); result = await ask(session, clean, controller.signal, marks) }
       if (!alive.current) return
       setAnswer(result); setLatency(Math.round(performance.now() - started)); setPhase('answering')
     } catch (err) {
@@ -140,6 +140,9 @@ function Phone({ session, demo, sessionOnline, menu, settingsOpen, onSettings }:
     if (!mic) { setError('Speech recognition is unavailable in this browser. Type your question below.'); setPhase('error'); return }
     stopAudio(); setError(''); setVoiceNote(''); setQuestion(''); setPhase('listening')
     recognition.current = mic
+    const opened = performance.now()
+    let wokeAt: number | null = null
+    if (!demo) wakeEye(session, false)   // someone is about to ask: the brain gets a frame and its connections ready
     void audioLevel.startMic()
     mic.lang = 'en-US'; mic.continuous = false; mic.interimResults = true
     let finalText = ''
@@ -151,7 +154,7 @@ function Phone({ session, demo, sessionOnline, menu, settingsOpen, onSettings }:
       if (alive.current) setQuestion(text)
       finalText = text
       // The moment "Iris" is recognised, before the question is finished, the eye on the glasses opens.
-      if (!woke && !demo && stripWakeWord(text) !== null) { woke = true; wakeEye(session) }
+      if (!woke && !demo && stripWakeWord(text) !== null) { woke = true; wokeAt = performance.now(); wakeEye(session) }
     }
     mic.onerror = event => {
       failed = true
@@ -165,7 +168,8 @@ function Phone({ session, demo, sessionOnline, menu, settingsOpen, onSettings }:
       if (!alive.current || failed) return
       const text = wakeWord ? stripWakeWord(finalText) : finalText.trim()
       if (!text) { setPhase('idle'); setVoiceNote(wakeWord ? 'Say “Iris” followed by your question. Tap to listen again.' : 'No question heard. Tap to try again.'); return }
-      void submit(text)
+      const now = performance.now()
+      void submit(text, { listen_ms: Math.round(now - opened), ...(wokeAt === null ? {} : { wake_ms: Math.round(now - wokeAt) }) })
     }
     try { mic.start(); micTimer.current = setTimeout(() => mic.stop(), 20000) }
     catch { audioLevel.stop(); recognition.current = null; setPhase('error'); setError('Microphone could not start. Try again or type below.') }

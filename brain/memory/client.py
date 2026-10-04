@@ -100,6 +100,11 @@ def _search_body(session_id: str, question: str, target: str | None) -> dict[str
     return body
 
 
+# httpx drops an idle connection after 5 s by default, so every save and search paid for a new TLS
+# handshake (about 0.5 s to Neon). Kept for two minutes, a busy session reuses one connection.
+KEEPALIVE = httpx.Limits(keepalive_expiry=120)
+
+
 class _Base:
     def __init__(self, base_url: str | None, ingest_token: str | None):
         self.base = _resolve_base(base_url)
@@ -121,7 +126,7 @@ class _Base:
 class MemoryClient(_Base):
     def __init__(self, base_url: str | None = None, ingest_token: str | None = None):
         super().__init__(base_url, ingest_token)
-        self.http = httpx.Client()
+        self.http = httpx.Client(limits=KEEPALIVE)
 
     def ingest(self, session_id: str, jpeg: bytes, description: str | None = None, captured_at: Any = None) -> dict | None:
         """Save a frame. Returns {saved, id, description, ms}, or None if memory is off or the call failed.
@@ -187,7 +192,7 @@ class AsyncMemoryClient(_Base):
         # thread), open a fresh pool there instead of failing.
         loop = asyncio.get_running_loop()
         if self._http is None or self._loop is not loop:
-            self._http = httpx.AsyncClient()
+            self._http = httpx.AsyncClient(limits=KEEPALIVE)
             self._loop = loop
         return self._http
 
@@ -204,6 +209,16 @@ class AsyncMemoryClient(_Base):
         except Exception as e:
             log.warning("memory ingest failed: %s", e)
             return None
+
+    async def warm(self) -> bool:
+        """Touch the memory function so it and the connection to it stay warm. Never raises."""
+        if not self.enabled:
+            return False
+        try:
+            return (await self.http.get(f"{self.base}/health", timeout=3)).status_code == 200
+        except Exception as e:
+            log.info("memory warm failed: %s", e)
+            return False
 
     async def search(self, session_id: str, question: str, target: str | None = None) -> dict:
         if not self.enabled:

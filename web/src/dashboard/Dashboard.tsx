@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
-import { keyOf, lullLine, ms, RULE_LABEL, thoughts, verdict, type AnswerEvent, type Decision, type Metrics, type MindEvent, type Tally, type Thought } from './mind'
+import { askLine, keyOf, lullLine, ms, RULE_LABEL, thoughts, verdict, type AnswerEvent, type Decision, type Metrics, type MindEvent, type Tally, type Thought } from './mind'
 import { useMind } from './useMind'
 import './dashboard.css'
 
@@ -174,7 +174,7 @@ function Asked({ answer, style }: { answer: AnswerEvent; style: CSSProperties })
     <dl>
       <div><dt>Asked</dt><dd>{answer.question}</dd></div>
       <div><dt>Answered</dt><dd className="mind-decided"><q>{answer.speak || answer.display}</q>
-        <span className="mind-latency">Answered in {ms(answer.latency_ms)}{answer.first_word_ms ? `, first word at ${ms(answer.first_word_ms)}` : ''}</span></dd></div>
+        <span className="mind-latency">{askLine(answer)}</span></dd></div>
     </dl>
   </article>
 }

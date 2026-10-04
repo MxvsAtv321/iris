@@ -16,7 +16,11 @@ export type Trace = {
   latency_ms: { capture?: number; model?: number; gate?: number; total?: number }
 }
 export type Decision = IrisEvent & { type: 'decision'; level: Level; text: string; reason: string; trace: Trace }
-export type AnswerEvent = IrisEvent & { type: 'answer'; question: string; display: string; speak: string; latency_ms: number }
+/** How long each step of a question took, in ms from the question reaching the brain. `wake` and `listen` are the
+ *  phone's own measurements from before it sent the question; `first_audio` is the phone's, from sending it. */
+export type AskLatency = { wake?: number; listen?: number; context?: number; first_word?: number; display?: number; speech?: number; first_audio?: number; total?: number }
+export type AskTrace = { mode?: string; frame?: { source: 'recent' | 'fresh'; age_ms: number } | null; latency_ms?: AskLatency }
+export type AnswerEvent = IrisEvent & { type: 'answer'; question: string; display: string; speak: string; latency_ms: number; trace?: AskTrace }
 export type MindEvent = Decision | AnswerEvent
 export type Metrics = {
   answer_latency_ms_p50?: number | null; gate_accuracy?: number | null; gate_precision?: number | null
@@ -105,6 +109,15 @@ export function reduce(mind: Mind, action: Action): Mind {
     const metrics = event as Metrics
     return { ...mind, metrics, tally: event.session_id === mind.sessionId ? tallyFrom(metrics, mind.tally) : mind.tally }
   }
+  if (event.type === 'answer_timing') {   // a step that finished after the answer went out: the glasses, the voice
+    const latency = (event as { latency_ms?: AskLatency }).latency_ms
+    const i = mind.events.findLastIndex(e => e.type === 'answer' && e.ask_id === event.ask_id && e.session_id === event.session_id)
+    if (i < 0 || !latency) return mind
+    const events = mind.events.slice()
+    const answer = events[i] as AnswerEvent
+    events[i] = { ...answer, trace: { ...answer.trace, latency_ms: latency } }
+    return { ...mind, events }
+  }
   const next = toMindEvent(event)
   if (!next) return mind
   // Another session's first word means the brain moved on; so does this screen.
@@ -170,6 +183,22 @@ export function verdict(d: Decision): { did: string; because: string; heldBack: 
   if (blocker) return { did: 'Stayed silent', because: `${RULE_LABEL[blocker.rule]}: ${sentence(blocker.detail, false)}`, heldBack: line, said: '' }
   if (t.urgency === null) return { did: 'Stayed silent', because: 'The model’s reply couldn’t be read.', heldBack: '', said: '' }
   return { did: 'Stayed silent', because: `Urgency ${t.urgency} is under ${t.display_at}, where it would show a line.`, heldBack: '', said: '' }
+}
+
+/** A question's wait, step by step, in the order the wearer lives it. An answer from a brain without timings gets the old line. */
+export function askLine(a: AnswerEvent): string {
+  const lat = a.trace?.latency_ms
+  if (!lat) return `Answered in ${ms(a.latency_ms)}${a.first_word_ms ? `, first word at ${ms(a.first_word_ms)}` : ''}.`
+  const before = [
+    lat.wake !== undefined ? `Heard “Iris” ${ms(lat.wake)} before the question arrived.` : '',
+    a.trace?.frame ? (a.trace.frame.source === 'recent' ? `Used a frame ${ms(a.trace.frame.age_ms)} old.` : 'Took a new frame.') : '',
+  ].filter(Boolean)
+  const steps = ([['first word', lat.first_word], ['answer written', lat.total ?? a.latency_ms], ['on the glasses', lat.display],
+    ['voice ready', lat.first_audio === undefined ? lat.speech : undefined], ['voice playing', lat.first_audio]] as const)
+    .filter((step): step is readonly [typeof step[0], number] => step[1] !== undefined)
+    .sort((x, y) => x[1] - y[1]).map(([label, at]) => `${label} ${ms(at)}`)   // in the order they happened
+  const line = steps.join(', ')
+  return [...before, line ? line[0].toUpperCase() + line.slice(1) + '.' : ''].filter(Boolean).join(' ')
 }
 
 function sentence(text: string, capital = true): string {
