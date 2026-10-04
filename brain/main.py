@@ -17,7 +17,10 @@ from fastapi.responses import Response, StreamingResponse
 from PIL import Image
 from pydantic import BaseModel
 
+import ahead
+import camera
 import gate
+import jev
 import live
 import llm  # loads .env
 import prompts
@@ -28,7 +31,6 @@ log = logging.getLogger("iris")
 
 CAMERA = os.getenv("CAMERA_URL") or "http://172.20.10.4"
 HUD = os.getenv("HUD_URL") or "http://172.20.10.6"
-PORT = int(os.getenv("PORT") or 8000)
 # The camera forgets these on restart, so they are sent at startup and at every session start. Empty means leave it alone.
 CAMERA_SETTINGS = {var: (os.getenv(env) or "").strip() for var, env in
                    (("framesize", "CAMERA_FRAMESIZE"), ("vflip", "CAMERA_VFLIP"), ("hmirror", "CAMERA_HMIRROR"))}
@@ -36,11 +38,21 @@ TICK_S, BACKOFF_S = 2, 5       # capture cadence; slower after 3 errors in a row
 LOOP_GAP_S = 6                 # at most one loop model call per 6 s (<=10 RPM, rest kept for questions)
 CHANGE_THRESHOLD = 12          # mean abs grey-level diff (0-255) on a 32x24 thumbnail; calibrate on site
 ASK_TIMEOUT_S = 5
+# Latency switches. Each can be turned off in .env if it misbehaves on the day: 0 restores the old behaviour.
+FRAME_REUSE_S = float(os.getenv("FRAME_REUSE_S") or 1.0)   # a question uses the newest frame if it is younger than this
+WAKE_READY_S = float(os.getenv("WAKE_READY_S") or 8)       # after the wake word, keep a fresh frame ready for this long
+EARLY_SPEECH = (os.getenv("EARLY_SPEECH") or "1") != "0"   # start the voice on the first sentence, before the answer ends
+KEEP_WARM_S = float(os.getenv("KEEP_WARM_S") or 25)        # ping every provider this often so no question pays a handshake
 WATCH_TIMEOUT_S = 12           # per model; the loop can wait, a reasoning watch model may need it
+# A second model for looks the watch model is late on. gpt-6-luna answers a look in about 2 s, but for roughly 20 s
+# of every minute it holds requests with a new picture for 6 to 12 s (measured: no other model does, and the network
+# is fine). If it hasn't started writing after WATCH_LATE_S, this model is asked too and whichever starts first is used.
+WATCH_LATE_MODEL = (os.getenv("WATCH_LATE_MODEL") or "").strip()
+WATCH_LATE_S = float(os.getenv("WATCH_LATE_S") or 2.5)
 FALLBACK = "Didn't catch that, try again"
 NO_PHOTO = "\n(The camera didn't respond, so there is no photo. If the question needs one, say you can't see right now.)"
 HERE = Path(__file__).resolve().parent
-STATE = HERE / "state.json"
+STATE = Path(os.getenv("IRIS_STATE") or HERE / "state.json")   # a second brain on this laptop (tests) must not share the first one's
 BAKEOFF = HERE / "bakeoff" / "results.json"
 
 http = llm.http
@@ -48,14 +60,20 @@ clients = set()
 gates = defaultdict(gate.Gate)
 latencies = deque(maxlen=50)   # (total_ms, first_word_ms)
 spoken = deque(maxlen=20)      # (ts, text) sent to TTS, for the echo filter
-frame = {"jpeg": b"", "ts": 0.0}
+frame = camera.frame            # the newest frame from the camera's stream or /capture, already upright
 frames = OrderedDict()         # frame_id -> JPEG the loop looked at, for the dashboard; the newest FRAMES_KEPT
 FRAMES_KEPT = 450              # about 15 minutes at one frame per tick
 BOOT = f"{int(time.time()):x}"  # in every frame URL: ids start again when the brain restarts, and browsers cache frames
 # What the dashboard loads when it opens: the running session's decisions and answers, and its counts.
 mind = {"sid": None, "events": deque(maxlen=1800), "tally": {"silent": 0, "display": 0, "speak": 0}}
 watch = {"ref": None, "box": None, "last_call": -1e9}
-frame_ids, ask_ids = count(1), count(1)
+frame_ids, ask_ids, speech_ids = count(1), count(1), count(1)
+asks = OrderedDict()           # ask_id -> {"sid", "lat", "sent"}: timings still arriving after the answer went out
+ASKS_KEPT = 50
+speech = OrderedDict()         # speech_id -> voice.Speech: audio the brain is already fetching for the phone
+SPEECH_KEPT = 20
+first_audio = deque(maxlen=50)  # ms from question sent to the phone's first audio, as the phone reports it
+ready = {"until": 0.0}         # the wake word's fresh-frame window; a newer wake replaces it
 background = set()
 asking = 0                     # questions in flight; the loop skips model calls meanwhile
 
@@ -130,14 +148,34 @@ async def emit(kind, sid, **fields):
 
 
 camera_lock = asyncio.Lock()   # the ESP32 serves one request at a time
+# What each framesize setting produces. A frame of any other size means the camera restarted and lost its settings.
+FRAME_SIZES = {"6": (320, 240), "10": (640, 480), "11": (800, 600), "12": (1024, 768)}
+healed = {"at": -1e9}
 
 
-async def capture():
+def lost_settings(jpeg):
+    """True when the camera is not sending the size it was told to: it has restarted into its defaults,
+    which are also upside down for this mount. A frame turned on its side counts as the same size."""
+    want = FRAME_SIZES.get(CAMERA_SETTINGS.get("framesize") or "")
+    if not want:
+        return False
+    try:
+        return sorted(Image.open(io.BytesIO(jpeg)).size) != sorted(want)
+    except Exception:  # noqa: BLE001 - an unreadable frame says nothing about the settings
+        return False
+
+
+async def capture(reuse_s=0.0):
+    """One frame from the camera. With reuse_s, a frame someone else took that recently is returned instead:
+    the camera serves one request at a time, so a second capture right behind the first is wasted time."""
+    if camera.live():              # the stream is delivering: its newest frame, and nothing asked of the camera
+        return frame["jpeg"]
     async with camera_lock:
+        if reuse_s and frame["jpeg"] and time.time() - frame["ts"] < reuse_s:
+            return frame["jpeg"]
         r = await http.get(CAMERA + "/capture", timeout=1.5)
-    r.raise_for_status()
-    frame["jpeg"], frame["ts"] = r.content, time.time()
-    return r.content
+        r.raise_for_status()
+        return await camera.publish(r.content)
 
 
 async def setup_camera():
@@ -157,23 +195,45 @@ async def setup_camera():
     log.info("camera settings applied: %s", wanted)
 
 
-async def fresh_frame():
+async def grab(info=None):
+    """The frame for a question, or b"" when the camera is down: the question still gets an answer.
+    A frame the loop or the wake word took under FRAME_REUSE_S ago is used as it is, with no new capture.
+    `info` is filled with where the frame came from: source (recent, fresh or none), age_ms and wait_ms."""
+    t0 = time.monotonic()
+    info = {} if info is None else info
+
+    def got(source, jpeg):
+        info.update(source=source, age_ms=round((time.time() - frame["ts"]) * 1000) if jpeg else None,
+                    wait_ms=round((time.monotonic() - t0) * 1000))
+        return jpeg
+
+    if frame["jpeg"] and time.time() - frame["ts"] < FRAME_REUSE_S:
+        return got("recent", frame["jpeg"])
     try:
-        return await capture()
+        before = frame["ts"]
+        jpeg = await capture(reuse_s=FRAME_REUSE_S)
+        return got("fresh" if frame["ts"] != before else "recent", jpeg)
     except Exception as e:  # noqa: BLE001
         if time.time() - frame["ts"] < 2:
-            log.warning("capture failed (%s); using loop frame", e)
-            return frame["jpeg"]
-        raise
-
-
-async def grab():
-    """A fresh frame, or b"" when the camera is down: the question still gets an answer."""
-    try:
-        return await fresh_frame()
-    except Exception as e:  # noqa: BLE001
+            log.warning("capture failed (%s); using the last frame", e)
+            return got("recent", frame["jpeg"])
         log.warning("capture failed: %s", e)
-        return b""
+        return got("none", b"")
+
+
+async def get_ready():
+    """The wearer has started talking. Until the question arrives, keep the newest frame under a second old
+    and the model connections open, so the question starts with both in hand."""
+    if not WAKE_READY_S:
+        return
+    until = ready["until"] = time.monotonic() + WAKE_READY_S
+    bg(keep_warm_once())
+    while time.monotonic() < until and ready["until"] == until and not asking:
+        try:
+            await capture(reuse_s=0.4)
+        except Exception as e:  # noqa: BLE001 - the question copes without a frame
+            log.info("wake capture: %s", e)
+        await asyncio.sleep(0.4)
 
 
 hud_lock = asyncio.Lock()      # display calls go out one at a time, in the order they were made
@@ -218,8 +278,10 @@ async def eye(anim):
 try:
     from memory import router as memory_router
     from memory import save_moment
+    from memory.adapter import shared_async_client as memory_client
+    from memory.search_router import safe_flat
 except Exception as e:  # noqa: BLE001 - memory is Darren's; the brain runs without it
-    save_moment = memory_router = None
+    save_moment = memory_router = memory_client = safe_flat = None
     log.warning("memory module not available (%s); moments won't be saved or searched", e)
 
 
@@ -255,7 +317,35 @@ async def decision(sid, fid, level, reason, box, text="", speak="", trace=None):
 # Every decision's trace has all of these keys; a frame the model never judged keeps the blanks.
 BLANK_TRACE = dict(frame_url=None, looked=False, skipped=None, change=None, saw="", why="", topic="", model=None,
                    candidate={"text": "", "say": ""}, said_before="", urgency=None, display_at=gate.DISPLAY_AT, speak_at=gate.SPEAK_AT,
-                   proposed="silent", rules=[], blocked_by=None, latency_ms={})
+                   proposed="silent", rules=[], blocked_by=None, latency_ms={}, jev=None, ahead=None)
+
+
+AHEAD_ASKS = ("phone", "keys", "water bottle")   # what memory is asked about when the notes say nothing
+
+
+async def left_behind(sid, s, description):
+    """What the wearer is walking away from, or None. Never raises.
+    The session's own notes answer first: they are instant, and hold the last 20 scenes. For a thing they
+    never mention, memory is asked where it was last seen (quietly: nobody asked, so the garden stays put)."""
+    if not ahead.ON or not ahead.leaving(description):
+        return None
+    found = ahead.left_behind(description, s["descriptions"])
+    if found or not memory_client:
+        return found
+    known = ahead.items_in(description).union(*(ahead.items_in(d) for d in s["descriptions"]))
+    wanted = [item for item in AHEAD_ASKS if item not in known]
+    try:
+        hits = await asyncio.wait_for(asyncio.gather(*(
+            memory_client().search(sid, f"where did I leave my {item}", target=item, quiet=True) for item in wanted)), 1.5)
+    except Exception as e:  # noqa: BLE001 - memory is slow or down: no nudge is the safe answer
+        log.info("think ahead: memory did not answer: %s", e)
+        return None
+    for item, hit in zip(wanted, hits):
+        moment = hit.get("moment") or {}
+        found = ahead.left_at(item, moment.get("description")) if moment.get("keyword_match") else None
+        if found:
+            return {**found, "moment_id": moment.get("id")}
+    return None
 
 
 async def tick(sid, fid, trace):
@@ -271,6 +361,10 @@ async def tick(sid, fid, trace):
 
     jpeg = await capture()
     lat["capture"] = ms(t0)
+    if lost_settings(jpeg) and time.monotonic() - healed["at"] > 15:      # whether the frame came from the stream or /capture
+        healed["at"] = time.monotonic()
+        log.warning("the camera restarted (its frames are the wrong size); sending its settings again")
+        bg(setup_camera())
     frames[fid] = jpeg
     while len(frames) > FRAMES_KEPT:
         frames.popitem(last=False)
@@ -292,7 +386,7 @@ async def tick(sid, fid, trace):
     trace["looked"] = True
     t_model = time.monotonic()
     text, model = await llm.chat(llm.messages(prompts.WATCH, prompts.build_watch(s), jpeg),
-                                 model=llm.WATCH, timeout=WATCH_TIMEOUT_S)
+                                 model=llm.WATCH, timeout=WATCH_TIMEOUT_S, late=(WATCH_LATE_MODEL, WATCH_LATE_S))
     lat["model"] = ms(t_model)
     trace["model"] = model
     w = llm.parse_json(text)
@@ -300,7 +394,21 @@ async def tick(sid, fid, trace):
         lat["total"] = ms(t0)
         return await decision(sid, fid, "silent", "bad model output", None, trace=trace)
     box = watch["box"] = gate.to_focus_box(w.get("box_2d"))
+    left = await left_behind(sid, s, str(w.get("description") or ""))
+    try:
+        busy = float(w.get("urgency") or 0) >= gate.SPEAK_AT      # something in view matters more than what was left
+    except (TypeError, ValueError):
+        busy = False
+    if left and not busy:
+        trace["ahead"] = left
+        w = {**w, **ahead.nudge(left)}
     line, say = str(w.get("text") or "")[:40], str(w.get("say") or "")
+    if jev.ON and (line or say):       # Iris has something it could say: System 1 decides how much it matters
+        opinion = await jev.interrupt(w, s["said"])
+        if opinion:                    # no usable answer in time: the vision model's own urgency stands
+            trace["jev"] = {**opinion, "watch_urgency": w.get("urgency")}
+            lat["jev"] = opinion["ms"]
+            w = {**w, "urgency": jev.urgency(opinion["probability"])}
     t_gate = time.perf_counter()
     level, reason, judged = gates[sid].explain(w)
     lat["gate"] = round((time.perf_counter() - t_gate) * 1000, 3)
@@ -357,6 +465,7 @@ def metrics():
         answer_latency_ms_p50=pct([t for t, _ in latencies], 0.5),
         answer_latency_ms_p95=pct([t for t, _ in latencies], 0.95),
         first_word_ms_p50=pct([f for _, f in latencies], 0.5),
+        first_audio_ms_p50=pct(first_audio, 0.5),   # question sent to voice playing, as the phone measures it
         gate_precision=bake.get("gate_precision"),
         gate_precision_basis=bake.get("basis"),  # "measured on N test photos" - label it that way
         # share of test photos where the gate chose the expected level; same basis as the precision
@@ -369,6 +478,8 @@ def metrics():
         model_usd_today=llm.usd_today(),
         ask_model=llm.PRIMARY,
         watch_model=llm.WATCH,
+        camera_source="stream" if camera.live() else "capture",   # live video, or single frames while the stream is down
+        camera_fps=camera.fps(),
     )
 
 
@@ -379,10 +490,32 @@ async def metrics_loop():
             await emit("metrics", state["active"], **metrics())
 
 
+async def keep_warm_once():
+    """Touch every provider a question can need: the models, the voice and memory. Never raises."""
+    jobs = [llm.warm(), voice.warm(http)]
+    if jev.ON:
+        jobs.append(http.head(jev.URL, timeout=3))
+    if memory_client:
+        jobs.append(memory_client().warm())
+    await asyncio.gather(*jobs, return_exceptions=True)
+
+
+async def keep_warm_loop():
+    """An idle connection is closed by one end or the other within a minute or two, and the next question
+    then pays for a new handshake. A small request every KEEP_WARM_S keeps each one open."""
+    while True:
+        await keep_warm_once()
+        await asyncio.sleep(KEEP_WARM_S)
+
+
 @asynccontextmanager
 async def lifespan(app):
-    tasks = [asyncio.create_task(watch_loop()), asyncio.create_task(metrics_loop())]
-    bg(llm.warm())
+    tasks = [asyncio.create_task(watch_loop()), asyncio.create_task(metrics_loop()),
+             asyncio.create_task(camera.read_stream(http))]
+    if KEEP_WARM_S:
+        tasks.append(asyncio.create_task(keep_warm_loop()))
+    else:
+        bg(llm.warm())
     bg(live.prefetch(http))
     bg(setup_camera())
     yield
@@ -424,12 +557,19 @@ async def stop_session():
     return {"session_id": None}
 
 
+class WakeIn(BaseModel):
+    session_id: str
+    eye: bool = True               # false: the mic opened without the wake word, so get ready but leave the eye alone
+
+
 @app.post("/api/wake")
-async def wake(body: SessionIn):
-    """The phone heard "Iris": the eye opens and listens. Returns once the display has answered, or after 1 s."""
+async def wake(body: WakeIn):
+    """The phone heard "Iris": the eye opens and listens, and the brain gets a frame and its connections ready
+    for the question. Returns once the display has answered, or after 1 s."""
     t0 = time.monotonic()
     gates[body.session_id].hold()     # no nudge over the top of someone who has started talking
-    opened = await eye("listening")
+    bg(get_ready())
+    opened = await eye("listening") if body.eye else False
     ms = int((time.monotonic() - t0) * 1000)
     log.info("wake %s: display %s in %dms", body.session_id, "answered" if opened else "did not answer", ms)
     return {"eye": opened, "display_ms": ms}
@@ -438,15 +578,16 @@ async def wake(body: SessionIn):
 class AskIn(BaseModel):
     session_id: str
     text: str
+    wake_ms: int | None = None     # from the phone: ms between hearing "Iris" and sending the question
+    listen_ms: int | None = None   # from the phone: ms between the mic opening and sending the question
 
 
 async def recall(sid, question):
     """Memory note for a recall question, or "" on a miss or failure."""
+    if not memory_client:
+        return ""
     try:
-        r = await http.post(f"http://127.0.0.1:{PORT}/api/memory/search",
-                            json={"session_id": sid, "query": question}, timeout=2)
-        r.raise_for_status()
-        hit = r.json()
+        hit = safe_flat(await asyncio.wait_for(memory_client().search(sid, question), 2))
         if hit.get("found"):
             return f"{hit.get('captured_at', '')}: {hit.get('description', '')}"
     except Exception as e:  # noqa: BLE001
@@ -460,6 +601,17 @@ async def remember_ask(sid, shot, question, said):
         await remember(sid, jpeg, f"Asked '{question}', Iris answered: {said}")
 
 
+def mark(ask_id, key, value):
+    """Record one step's time for a question. Steps that land after the answer went out (the display
+    answering, the first audio) are sent on as an `answer_timing` event, so the dashboard still gets them."""
+    a = asks.get(ask_id)
+    if not a or key in a["lat"]:
+        return
+    a["lat"][key] = value
+    if a["sent"]:
+        bg(emit("answer_timing", a["sid"], ask_id=ask_id, latency_ms=dict(a["lat"])))
+
+
 @app.post("/api/ask")
 async def ask(q: AskIn):
     global asking
@@ -469,32 +621,64 @@ async def ask(q: AskIn):
     mode, question = prompts.pick_mode(q.text)
     s, g = session(sid), gates[sid]
     g.hold()
-    asking += 1
     bg(eye("thinking"))            # the eye thinks while the model works; it opens first if the wake word didn't
-    out, first_ms, shown, timings, sources = "", None, False, {}, []
+    out, first_ms, shown, sources, said, spoken_parts, shot_info = "", None, False, [], "", 0, {}
+    # Every step's time in ms from the question arriving; `wake` and `listen` are the phone's own measurements.
+    lat = {k: v for k, v in (("wake", q.wake_ms), ("listen", q.listen_ms)) if v is not None and 0 <= v < 120000}
+    asks[ask_id] = {"sid": sid, "lat": lat, "sent": False}
+    while len(asks) > ASKS_KEPT:
+        asks.popitem(last=False)
+
+    async def on_glasses(line):
+        if await show(line, eye="answer"):
+            mark(ask_id, "display", ms())
+
+    async def say(text):
+        """Start fetching this part of the answer's audio now, and tell the phone where to get it."""
+        nonlocal spoken_parts
+        speech_id = f"s_{next(speech_ids):04d}"
+        item = speech[speech_id] = voice.Speech(text)
+        while len(speech) > SPEECH_KEPT:
+            speech.popitem(last=False)
+        bg(item.fetch(http, on_first=(lambda: mark(ask_id, "speech", ms())) if spoken_parts == 0 else None))
+        spoken.append((time.time(), text))
+        await emit("speech", sid, ask_id=ask_id, seq=spoken_parts, text=text, audio_url=f"/api/tts/{speech_id}")
+        spoken_parts += 1
+
     # Camera, memory and live data are fetched side by side; none of them raises.
-    shot = asyncio.create_task(grab())
+    shot = asyncio.create_task(grab(shot_info))
+    mode_by = "rules"
+    if jev.ON:                         # System 1 picks the mode while the frame is fetched; the rules' pick stands if it is slow
+        picked = await jev.mode(question)
+        lat["mode"] = ms()
+        if picked:
+            mode, mode_by = picked, "jev"
     memo_task = asyncio.create_task(recall(sid, question)) if mode == "recall" else None
     live_task = asyncio.create_task(live.note(question, http)) if live.topics(question) else None
     if live_task and mode == "ask" and not prompts.DEICTIC.search(question):
         mode = "live"   # answered from live data alone: no photo to wait for or upload
-    try:
+    asking += 1         # counted only where the `finally` below is certain to take it back: a count
+    try:                # left behind would keep the watch loop skipping every frame as "question in progress"
         async with asyncio.timeout(ASK_TIMEOUT_S):
             memo = await memo_task if memo_task else ""
             live_note, sources = await live_task if live_task else ("", [])
             jpeg = b""
             if mode != "live":
                 jpeg = await shot
-            timings["context"] = ms()
+            lat["context"] = ms()
             text = prompts.build_ask(question + ("" if jpeg or mode == "live" else NO_PHOTO), s, memo, live_note)
             async for chunk in llm.hedged_stream(llm.messages(prompts.ASK[mode], text, jpeg)):
                 if first_ms is None:
-                    first_ms = timings["first_word"] = ms()
+                    first_ms = lat["first_word"] = ms()
                 out += chunk
                 await emit("answer_delta", sid, ask_id=ask_id, text=chunk)
                 if not shown and "\n" in out.strip():
                     shown = True
-                    bg(show(prompts.split_answer(out)[0], eye="answer"))   # line 1 on the glasses before line 2 is done
+                    bg(on_glasses(prompts.split_answer(out)[0]))   # line 1 on the glasses before line 2 is done
+                if EARLY_SPEECH and not said:
+                    said = prompts.first_sentence(prompts.split_answer(out)[1])
+                    if said:
+                        await say(said)                            # the voice starts while the rest is written
     except Exception as e:  # noqa: BLE001 - never a 500
         log.warning("ask %s failed after %dms: %s: %s", ask_id, ms(), type(e).__name__, e)
     finally:
@@ -504,20 +688,48 @@ async def ask(q: AskIn):
     if not display:
         display, speak = FALLBACK, ""
     if not shown:
-        bg(show(display, eye="answer"))
-    latency_ms = ms()
+        bg(on_glasses(display))
+    if EARLY_SPEECH and speak:
+        rest = speak[len(said):].strip() if speak.startswith(said) else ""
+        if rest:
+            await say(rest)
+    latency_ms = lat["total"] = ms()
     level = "speak" if speak else "display"
     latencies.append((latency_ms, first_ms))
     g.hold(speak or display)
     note(s["said"], speak or display)
-    if display != FALLBACK:
+    if display != FALLBACK and mode != "recall":   # an answer about the past is not a new sighting of the thing
         bg(remember_ask(sid, shot, question, speak or display))
     save_state()
-    log.info("ask %s mode=%s %s total=%dms sources=%s", ask_id, mode, timings, latency_ms, sources)
+    used = mode != "live" and shot_info.get("source") in ("recent", "fresh")
+    trace = {"mode": mode, "mode_by": mode_by, "latency_ms": lat,
+             "frame": {"source": shot_info["source"], "age_ms": shot_info["age_ms"]} if used else None}
+    log.info("ask %s mode=%s frame=%s %s sources=%s", ask_id, mode, trace["frame"], lat, sources)
+    sent = dict(lat)
     await emit("answer", sid, ask_id=ask_id, question=question, display=display, speak=speak,
-               latency_ms=latency_ms, first_word_ms=first_ms, context=sources)
+               latency_ms=latency_ms, first_word_ms=first_ms, context=sources, trace=trace)
+    asks[ask_id]["sent"] = True
+    if lat != sent:                # a step landed while the answer was going out
+        await emit("answer_timing", sid, ask_id=ask_id, latency_ms=dict(lat))
     await emit("metrics", sid, **metrics())
     return {"display": display, "speak": speak, "level": level, "latency_ms": latency_ms}
+
+
+class TimingIn(BaseModel):
+    session_id: str
+    ask_id: str
+    first_audio_ms: int
+
+
+@app.post("/api/timing")
+async def timing(body: TimingIn):
+    """The phone reports when the answer's voice started playing: ms on its own clock since it sent the question."""
+    a = asks.get(body.ask_id)
+    ok = bool(a and a["sid"] == body.session_id and 0 <= body.first_audio_ms < 60000 and "first_audio" not in a["lat"])
+    if ok:
+        first_audio.append(body.first_audio_ms)
+        mark(body.ask_id, "first_audio", body.first_audio_ms)
+    return {"ok": ok}
 
 
 @app.get("/api/live")
@@ -549,6 +761,18 @@ async def latest_frame():
     if not frame["jpeg"]:
         return Response(status_code=204)
     return Response(frame["jpeg"], media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/stream")
+async def live_video():
+    """What the glasses see, as live video (MJPEG) for the dashboard. The brain is the camera's only viewer and passes
+    its frames on, so any number of dashboards can watch. While the camera's stream is down this still works, at the
+    pace of the watch loop's single frames."""
+    async def parts():
+        async for jpeg in camera.frames_for_a_viewer():
+            yield camera.multipart(jpeg)
+    return StreamingResponse(parts(), media_type="multipart/x-mixed-replace; boundary=frame",
+                             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
 
 @app.get("/api/frame/{frame_id}")
@@ -587,6 +811,16 @@ async def ws(sock: WebSocket):
         pass
     finally:
         clients.discard(sock)
+
+
+@app.get("/api/tts/{speech_id}")
+async def tts_started(speech_id: str):
+    """Audio the brain began fetching when it emitted a `speech` event. Plays from the start even if it is
+    still arriving. 204 when there is no audio (unknown id, or the voice is unavailable): show the text."""
+    item = speech.get(speech_id)
+    if item is None or not await item.started():
+        return Response(status_code=204)
+    return StreamingResponse(item.read(), media_type="audio/mpeg")
 
 
 @app.get("/api/tts")

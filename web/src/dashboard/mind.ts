@@ -14,14 +14,24 @@ export type Trace = {
   said_before: string   // the earlier line, when the model itself stayed quiet because the wearer was already told
   urgency: number | null; display_at: number; speak_at: number; proposed: Level
   rules: Rule[]; blocked_by: RuleName | null; verdict: Level
-  latency_ms: { capture?: number; model?: number; gate?: number; total?: number }
+  latency_ms: { capture?: number; model?: number; jev?: number; gate?: number; total?: number }
+  /** System 1's second opinion, when the brain runs with JEV_GATE=1 and it answered in time: the chance this moment
+   *  is worth an interruption, which replaced the vision model's own urgency (`watch_urgency`). */
+  jev: { probability: number; model: string; ms: number; watch_urgency: number | null } | null
+  /** Thinking ahead: the wearer is heading out and this thing was last seen resting somewhere. The nudge is about it. */
+  ahead: { item: string; place: string; seen: string; at: string } | null
 }
 export type Decision = IrisEvent & { type: 'decision'; level: Level; text: string; reason: string; trace: Trace }
-export type AnswerEvent = IrisEvent & { type: 'answer'; question: string; display: string; speak: string; latency_ms: number }
+/** How long each step of a question took, in ms from the question reaching the brain. `wake` and `listen` are the
+ *  phone's own measurements from before it sent the question; `first_audio` is the phone's, from sending it. */
+export type AskLatency = { wake?: number; listen?: number; context?: number; first_word?: number; display?: number; speech?: number; first_audio?: number; total?: number }
+export type AskTrace = { mode?: string; frame?: { source: 'recent' | 'fresh'; age_ms: number } | null; latency_ms?: AskLatency }
+export type AnswerEvent = IrisEvent & { type: 'answer'; question: string; display: string; speak: string; latency_ms: number; trace?: AskTrace }
 export type MindEvent = Decision | AnswerEvent
 export type Metrics = {
   answer_latency_ms_p50?: number | null; gate_accuracy?: number | null; gate_precision?: number | null
   gate_precision_basis?: string | null; watch_model?: string
+  camera_source?: 'stream' | 'capture'; camera_fps?: number   // live video from the camera's stream, or single frames while it is down
   moments_seen?: number; moments_silent?: number; moments_shown?: number; moments_spoken?: number
 }
 export type Tally = { silent: number; display: number; speak: number }
@@ -60,6 +70,8 @@ function traceOf(event: IrisEvent): Trace {
     blocked_by: t.blocked_by ?? null,
     verdict: event.level ?? 'silent',
     latency_ms: object(t.latency_ms) ? t.latency_ms : {},
+    jev: object(t.jev) && typeof t.jev.probability === 'number' ? t.jev : null,
+    ahead: object(t.ahead) && typeof t.ahead.item === 'string' && typeof t.ahead.place === 'string' ? t.ahead : null,
   }
 }
 
@@ -106,6 +118,15 @@ export function reduce(mind: Mind, action: Action): Mind {
   if (event.type === 'metrics') {
     const metrics = event as Metrics
     return { ...mind, metrics, tally: event.session_id === mind.sessionId ? tallyFrom(metrics, mind.tally) : mind.tally }
+  }
+  if (event.type === 'answer_timing') {   // a step that finished after the answer went out: the glasses, the voice
+    const latency = (event as { latency_ms?: AskLatency }).latency_ms
+    const i = mind.events.findLastIndex(e => e.type === 'answer' && e.ask_id === event.ask_id && e.session_id === event.session_id)
+    if (i < 0 || !latency) return mind
+    const events = mind.events.slice()
+    const answer = events[i] as AnswerEvent
+    events[i] = { ...answer, trace: { ...answer.trace, latency_ms: latency } }
+    return { ...mind, events }
   }
   const next = toMindEvent(event)
   if (!next) return mind
@@ -179,10 +200,46 @@ export function verdict(d: Decision): { did: string; because: string; heldBack: 
   return { ...none, did: 'Stayed silent', because: `Urgency ${t.urgency} is under ${t.display_at}, where it would show a line.` }
 }
 
+/** A question's wait, step by step, in the order the wearer lives it. An answer from a brain without timings gets the old line. */
+export function askLine(a: AnswerEvent): string {
+  const lat = a.trace?.latency_ms
+  if (!lat) return `Answered in ${ms(a.latency_ms)}${a.first_word_ms ? `, first word at ${ms(a.first_word_ms)}` : ''}.`
+  const before = [
+    lat.wake !== undefined ? `Heard “Iris” ${ms(lat.wake)} before the question arrived.` : '',
+    a.trace?.frame ? (a.trace.frame.source === 'recent' ? `Used a frame ${ms(a.trace.frame.age_ms)} old.` : 'Took a new frame.') : '',
+  ].filter(Boolean)
+  const steps = ([['first word', lat.first_word], ['answer written', lat.total ?? a.latency_ms], ['on the glasses', lat.display],
+    ['voice ready', lat.first_audio === undefined ? lat.speech : undefined], ['voice playing', lat.first_audio]] as const)
+    .filter((step): step is readonly [typeof step[0], number] => step[1] !== undefined)
+    .sort((x, y) => x[1] - y[1]).map(([label, at]) => `${label} ${ms(at)}`)   // in the order they happened
+  const line = steps.join(', ')
+  return [...before, line ? line[0].toUpperCase() + line.slice(1) + '.' : ''].filter(Boolean).join(' ')
+}
+
 function sentence(text: string, capital = true): string {
   const s = text.trim()
   if (!s) return ''
   return (capital ? s[0].toUpperCase() + s.slice(1) : s) + (/[.!?]$/.test(s) ? '' : '.')
+}
+
+/** "Jev: 83% worth interrupting. The vision model alone said urgency 4." Empty when Jev had no say. */
+export function jevLine(t: Trace): string {
+  if (!t.jev) return ''
+  const own = typeof t.jev.watch_urgency === 'number' && t.jev.watch_urgency !== t.urgency ? ` The vision model alone said urgency ${t.jev.watch_urgency}.` : ''
+  return `Jev: ${Math.round(t.jev.probability * 100)}% worth interrupting.${own}`
+}
+
+/** What a live picture's caption says: the frame rate while the camera's stream runs, and plainly when it doesn't. */
+export function liveCaption(metrics: Metrics | null): string {
+  if (metrics?.camera_source === 'stream') return metrics.camera_fps ? `Live, ${Math.round(metrics.camera_fps)} frames a second` : 'Live'
+  if (metrics?.camera_source === 'capture') return 'Live, one frame every 2 s. The camera’s video stream is down.'
+  return 'Live'
+}
+
+/** "Thinking ahead: the phone was last seen on the table, at 19:02." Empty when this moment wasn't about leaving something. */
+export function aheadLine(t: Trace): string {
+  if (!t.ahead) return ''
+  return `Thinking ahead: the ${t.ahead.item} ${t.ahead.item.endsWith('s') ? 'were' : 'was'} last seen on the ${t.ahead.place}${t.ahead.at ? `, at ${t.ahead.at}` : ''}.`
 }
 
 export function ms(n: number | undefined): string {

@@ -77,7 +77,7 @@ describe('iris audio meter', () => {
   })
 })
 
-import { appendEvent, startSession, type IrisEvent } from './api'
+import { appendEvent, speechKey, startSession, type IrisEvent } from './api'
 import { EventSpeech } from './eventSpeech'
 
 const eventBase = { session_id: 'tests', at: '2026-10-03T19:02:11Z' }
@@ -157,6 +157,47 @@ describe('WebSocket speech', () => {
     await Promise.resolve()
     expect(fetcher).toHaveBeenCalledTimes(2)
     next.voice.dispose()
+  })
+  it('plays an answer part by part from the brain’s audio, and not again when the whole answer arrives', async () => {
+    const fetcher = vi.fn().mockImplementation(async (url: string) => ({ ok: true, status: 200, arrayBuffer: async () => new TextEncoder().encode(url).buffer }))
+    vi.stubGlobal('fetch', fetcher)
+    const { voice, meter } = setup()
+    voice.unlock()
+    const part = (seq: number, text: string) => parseEvent(JSON.stringify({ ...eventBase, type: 'speech', ask_id: 'parts-ask', seq, text, audio_url: '/api/tts/s_000' + seq }))!
+    expect(part(0, 'First.')).not.toBeNull()
+    voice.receive(part(0, 'First.')); voice.receive(part(0, 'First.')); voice.receive(part(1, 'Second.'))
+    voice.receive({ ...eventBase, type: 'answer', ask_id: 'parts-ask', speak: 'First. Second.' })
+    await vi.waitFor(() => expect(meter.playVoice).toHaveBeenCalledTimes(2))
+    expect(fetcher.mock.calls.map(call => call[0])).toEqual(['/api/tts/s_0000', '/api/tts/s_0001'])
+    expect(meter.playVoice.mock.calls.map(call => new TextDecoder().decode(call[0]))).toEqual(['/api/tts/s_0000', '/api/tts/s_0001'])
+    voice.dispose()
+  })
+  it('reports the first audio of the question this phone sent, once', async () => {
+    const fetcher = vi.fn().mockImplementation(async (url: string) => url === '/api/timing' ? { ok: true, status: 200 } : { ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(1) })
+    vi.stubGlobal('fetch', fetcher)
+    const { voice, meter } = setup()
+    meter.playVoice.mockImplementation(async (_data: ArrayBuffer, _signal: AbortSignal, started: () => void) => started())
+    voice.unlock()
+    voice.expect(performance.now() - 1200)
+    voice.receive({ ...eventBase, type: 'speech', ask_id: 'timed-ask', seq: 0, text: 'First.', audio_url: '/api/tts/s_0007' })
+    voice.receive({ ...eventBase, type: 'speech', ask_id: 'timed-ask', seq: 1, text: 'Second.', audio_url: '/api/tts/s_0008' })
+    await vi.waitFor(() => expect(meter.playVoice).toHaveBeenCalledTimes(2))
+    const reports = fetcher.mock.calls.filter(call => call[0] === '/api/timing')
+    expect(reports).toHaveLength(1)
+    const body = JSON.parse(reports[0][1].body)
+    expect(body).toMatchObject({ session_id: 'tests', ask_id: 'timed-ask' })
+    expect(body.first_audio_ms).toBeGreaterThanOrEqual(1200)
+    voice.dispose()
+  })
+  it('validates speech and timing events, and keeps them out of the event list', () => {
+    const speech = { ...eventBase, type: 'speech', ask_id: 'a', seq: 0, text: 'Hi.', audio_url: '/api/tts/s_0001' }
+    expect(speechKey(parseEvent(JSON.stringify(speech))!)).toBe('tests:ask:a:0')
+    expect(parseEvent(JSON.stringify({ ...speech, audio_url: 'https://elsewhere.example/x.mp3' }))).toBeNull()
+    expect(parseEvent(JSON.stringify({ ...speech, seq: undefined }))).toBeNull()
+    const timing = parseEvent(JSON.stringify({ ...eventBase, type: 'answer_timing', ask_id: 'a', latency_ms: { first_audio: 900 } }))!
+    expect(timing).not.toBeNull()
+    expect(parseEvent(JSON.stringify({ ...eventBase, type: 'answer_timing', ask_id: 'a' }))).toBeNull()
+    expect(appendEvent(appendEvent([], parseEvent(JSON.stringify(speech))!), timing)).toEqual([])
   })
   it.each([204, 500])('keeps text available when TTS returns %s', async status => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: status < 400, status }))

@@ -55,7 +55,7 @@ function openai(): OpenAI {
 const EMBED_MODEL = process.env.EMBED_MODEL || "text-embedding-3-small"; // must produce 1536 dimensions to match the table
 const VISION_MODEL = process.env.VISION_MODEL || "gpt-4o-mini";
 const DEDUPE_THRESHOLD = Number(process.env.DEDUPE_THRESHOLD || "0.95");
-const MIN_SIMILARITY = Number(process.env.SEARCH_MIN_SIMILARITY || "0.30");
+const MIN_SIMILARITY = Number(process.env.SEARCH_MIN_SIMILARITY || "0.45");
 const MAX_IMAGE_BYTES = 2_000_000;
 
 // Time budgets. Search is one embedding call and one query, so it answers well
@@ -216,6 +216,17 @@ function requestOrigin(url: string): string {
   return new URL(url).origin;
 }
 
+/** The brain's difference hash of the photo: 16 lowercase hex characters. Anything else is treated as not sent. */
+export function imageHash(header: string | undefined): string | null {
+  const hash = header?.trim().toLowerCase();
+  return hash && /^[0-9a-f]{16}$/.test(hash) ? hash : null;
+}
+
+/** Moment ids are whole numbers. Anything else can't exist, so it's a 404, not a failed database query. */
+function isMomentId(id: string): boolean {
+  return /^\d{1,15}$/.test(id);
+}
+
 type Candidate = {
   id: number;
   captured_at: Date;
@@ -224,6 +235,22 @@ type Candidate = {
   keyword_match: boolean;
   has_depth: boolean;
 };
+
+/**
+ * Which candidate answers the question. "Where is it" means "where did I last
+ * see it", so the newest real match wins. A moment that names the object is a
+ * real match. Only when none does is a moment that just resembles it accepted,
+ * and then it has to clear the similarity floor: unrelated moments in one room
+ * score around 0.2 to 0.3 against each other.
+ */
+export function pickMoment<T extends Pick<Candidate, "captured_at" | "similarity" | "keyword_match">>(
+  rows: T[],
+  minSimilarity = MIN_SIMILARITY,
+): T | undefined {
+  const named = rows.filter((r) => r.keyword_match);
+  const matches = named.length ? named : rows.filter((r) => r.similarity > minSimilarity);
+  return [...matches].sort((a, b) => +b.captured_at - +a.captured_at)[0];
+}
 
 // ---------------------------------------------------------------- routes
 
@@ -264,19 +291,23 @@ app.post("/ingest", async (c) => {
     const description = given ? decodeURIComponent(given) : await describe(jpeg);
     const embedding = await embed(description, INGEST_EMBED_TIMEOUT_MS);
 
-    // Dedupe and insert happen atomically inside Postgres. The photo is uploaded
+    // Dedupe and insert happen atomically inside Postgres. A duplicate has to look like the last
+    // moment (the image hash) as well as read like it, so a new scene described the same way is
+    // kept. Without a hash the descriptions alone decide, as they used to. The photo is uploaded
     // inside the same transaction, so a moment only becomes visible once its
     // photo is stored, and a failed upload leaves no broken moment behind.
     const imageKey = `moments/${randomUUID()}.jpg`;
     let id: number | null = null;
+    let skipped: string | null = null;
     const db = await pool.connect();
     try {
       await db.query("BEGIN");
-      const { rows } = await db.query<{ id: number | null }>(
-        "SELECT insert_memory_if_new($1, $2, $3, $4::vector, $5, $6) AS id",
-        [sessionId, imageKey, description, JSON.stringify(embedding), DEDUPE_THRESHOLD, capturedAt],
+      const { rows } = await db.query<{ id: number | null; skipped: string | null }>(
+        "SELECT id, skipped FROM save_memory_if_new($1, $2, $3, $4::vector, $5, $6, $7)",
+        [sessionId, imageKey, description, JSON.stringify(embedding), DEDUPE_THRESHOLD, capturedAt, imageHash(c.req.header("x-image-hash"))],
       );
       id = rows[0]?.id ?? null;
+      skipped = rows[0]?.skipped ?? null;
       if (id !== null) await putObject(imageKey, jpeg, "image/jpeg");
       await db.query("COMMIT");
     } catch (err) {
@@ -285,7 +316,7 @@ app.post("/ingest", async (c) => {
     } finally {
       db.release();
     }
-    return c.json({ saved: id !== null, id, description, ms: Date.now() - started });
+    return c.json({ saved: id !== null, id, skipped, description, ms: Date.now() - started });
   } catch (err) {
     console.error("[ingest]", err);
     return c.json({ error: String(err) }, 502);
@@ -312,15 +343,14 @@ app.post("/search", async (c) => {
       [sessionId, JSON.stringify(embedding), target],
     );
 
-    // "Where is it" means "where did I last see it", so among real matches take the newest.
-    const matches = rows.filter((r) => r.keyword_match || r.similarity >= MIN_SIMILARITY);
-    const best = [...matches].sort((a, b) => +b.captured_at - +a.captured_at)[0];
+    const best = pickMoment(rows);
     const base = requestOrigin(c.req.url);
     const shape = (r: Candidate) => ({ ...r, ...momentUrls(base, r.id, sessionId) });
 
     // Log it so the VR garden can follow questions asked anywhere. Never fails the search.
+    // `quiet` is the brain looking something up for itself: nobody asked, so the garden shouldn't react.
     let searchId: number | null = null;
-    try {
+    if (body.quiet !== true) try {
       const logged = await pool.query<{ id: number }>(
         "INSERT INTO memory_searches (session_id, question, target, moment_id) VALUES ($1, $2, $3, $4) RETURNING id",
         [sessionId, question, target, best?.id ?? null],
@@ -383,6 +413,7 @@ app.get("/moments/:id/image", async (c) => {
     const { sessionId, denied } = await resolveSession(c, c.req.query("session_id"));
     if (denied) return denied;
     if (!sessionId) return c.json({ error: "missing session_id" }, 400);
+    if (!isMomentId(c.req.param("id"))) return c.json({ error: "not found" }, 404);
     const { rows } = await pool.query<{ image_key: string | null }>(
       "SELECT image_key FROM memories WHERE id = $1 AND session_id = $2",
       [c.req.param("id"), sessionId],
@@ -404,6 +435,7 @@ app.get("/moments/:id/depth", async (c) => {
     const { sessionId, denied } = await resolveSession(c, c.req.query("session_id"));
     if (denied) return denied;
     if (!sessionId) return c.json({ error: "missing session_id" }, 400);
+    if (!isMomentId(c.req.param("id"))) return c.json({ error: "not found" }, 404);
     const { rows } = await pool.query<{ depth_key: string | null }>(
       "SELECT depth_key FROM memories WHERE id = $1 AND session_id = $2",
       [c.req.param("id"), sessionId],
@@ -425,6 +457,7 @@ app.put("/moments/:id/depth", async (c) => {
     const { sessionId, denied } = await resolveSession(c, c.req.query("session_id"));
     if (denied) return denied;
     if (!sessionId) return c.json({ error: "missing session_id" }, 400);
+    if (!isMomentId(c.req.param("id"))) return c.json({ error: "not found" }, 404);
     const png = Buffer.from(await c.req.arrayBuffer());
     const isPng = png.length > 8 && png.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
     if (!isPng) return c.json({ error: "body must be a PNG" }, 400);

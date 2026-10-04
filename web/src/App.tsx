@@ -1,7 +1,8 @@
 import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from 'react'
 import { SafeBoundary } from './garden/SafeBoundary'
 const Garden = lazy(() => import('./garden/Garden').then(module => ({ default: module.Garden })))
-import { ask, startSession, stripWakeWord, wakeEye, type Answer } from './api'
+import { ask, startSession, stripWakeWord, wakeEye, type Answer, type AskMarks } from './api'
+import { savedJudge, signIn, signInAvailable, signInEnabled, signOut, type Judge } from './judge'
 import { useFeed } from './useFeed'
 import { Dashboard } from './dashboard/Dashboard'
 import { speechRecognition, type Recognition } from './voice'
@@ -20,24 +21,55 @@ export default function App() {
   const dashboard = location.pathname === '/dashboard'
   const garden = location.pathname === '/garden'
   useEffect(() => {
-    if (dashboard) return   // the dashboard only watches: opening or reloading it must not start or restart a session
+    // The dashboard and the garden only watch. Starting a session makes it the brain's one active session,
+    // so opening either on a second screen must not take the glasses away from the judge wearing them.
+    if (dashboard || garden) return
     const controller = new AbortController()
     setSessionOnline(false)
     void startSession(session, controller.signal).then(ok => {
       if (!controller.signal.aborted) setSessionOnline(ok)
     })
     return () => controller.abort()
-  }, [session, dashboard])
+  }, [session, dashboard, garden])
   const [draft, setDraft] = useState(session)
   const [demo, setDemo] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  function changeSession() {
-    const next = draft.trim()
-    if (!next) return
-    setSession(next)
+  function switchSession(next: string) {
+    setSession(next); setDraft(next)
     try { localStorage.setItem('iris-session', next) } catch { /* Session still works without storage. */ }
   }
+  function changeSession() {
+    const next = draft.trim()
+    if (next) switchSession(next)
+  }
+  // Judge sign-in (Neon Auth). It is offered only when the sign-in service answers; without it, or if a
+  // sign-in fails, the app keeps the no-login session it already has.
+  const [judge, setJudge] = useState<Judge | null>(savedJudge)
+  const [canSignIn, setCanSignIn] = useState(false)
+  const [judgeName, setJudgeName] = useState(() => savedJudge()?.name ?? '')
+  const [judgeNote, setJudgeNote] = useState('')
+  const [signingIn, setSigningIn] = useState(false)
+  useEffect(() => {
+    let active = true
+    void signInAvailable().then(ok => { if (active) setCanSignIn(ok) })
+    return () => { active = false }
+  }, [])
+  async function judgeSignIn() {
+    setSigningIn(true); setJudgeNote('')
+    try { const next = await signIn(judgeName); setJudge(next); switchSession(next.id) }
+    catch (error) { setJudgeNote(error instanceof Error ? error.message : 'Sign-in isn’t available right now.') }
+    finally { setSigningIn(false) }
+  }
+  function judgeSignOut() { signOut(); setJudge(null); setJudgeNote(''); switchSession('judge-01') }
+  const signedIn = signInEnabled() && judge !== null && judge.id === session
   const sessionControls = <div className="session-bar"><form onSubmit={e => { e.preventDefault(); changeSession() }}><label htmlFor="session">SESSION</label><input id="session" value={draft} maxLength={80} onChange={e => setDraft(e.target.value)} /><button disabled={!draft.trim() || draft.trim() === session}>Apply</button></form>
+      {(canSignIn || signedIn) && <form className="judge-bar" onSubmit={e => { e.preventDefault(); void judgeSignIn() }}>
+        <label htmlFor="judge">YOUR NAME</label>
+        {signedIn
+          ? <p className="judge-in">Signed in as {judge.name}. This memory and garden are yours alone. <button type="button" onClick={judgeSignOut}>Sign out</button></p>
+          : <><input id="judge" value={judgeName} maxLength={60} placeholder="Sign in for a memory of your own" autoComplete="name" onChange={e => setJudgeName(e.target.value)} /><button disabled={signingIn || !judgeName.trim()}>{signingIn ? 'Signing in' : 'Sign in'}</button></>}
+        {judgeNote && <p className="judge-note" role="status">{judgeNote}</p>}
+      </form>}
       <label className="demo-toggle"><input type="checkbox" checked={demo} onChange={e => setDemo(e.target.checked)} /> Demo mode</label>
     </div>
   if (dashboard) return <Dashboard />
@@ -110,7 +142,7 @@ function Phone({ session, demo, sessionOnline, menu, settingsOpen, onSettings }:
     return () => { disposed = true; void lock?.release(); document.removeEventListener('visibilitychange', acquire) }
   }, [])
   function stopAudio() { speaker.current?.stop(); audioLevel.stop(); setSpeaking(false) }
-  async function submit(text: string) {
+  async function submit(text: string, marks: AskMarks = {}) {
     const clean = text.trim()
     if (!clean || request.current) return
     stopAudio(); setQuestion(clean); setError(''); setVoiceNote(''); setAnswer(null); setLatency(null); setPhase('thinking')
@@ -124,7 +156,7 @@ function Phone({ session, demo, sessionOnline, menu, settingsOpen, onSettings }:
         await new Promise<void>(resolve => { demoTimer.current = setTimeout(resolve, 900); controller.signal.addEventListener('abort', () => { clearTimeout(demoTimer.current); resolve() }, { once: true }) })
         if (controller.signal.aborted) return
         result = { display: 'Demo: 12g protein per bar', speak: 'This is a scripted demo answer: twelve grams of protein per bar. Connect the brain to ask about what you are actually seeing.', level: 'speak', latency_ms: 900 }
-      } else result = await ask(session, clean, controller.signal)
+      } else { speaker.current?.expect(started); result = await ask(session, clean, controller.signal, marks) }
       if (!alive.current) return
       setAnswer(result); setLatency(Math.round(performance.now() - started)); setPhase('answering')
     } catch (err) {
@@ -140,6 +172,9 @@ function Phone({ session, demo, sessionOnline, menu, settingsOpen, onSettings }:
     if (!mic) { setError('Speech recognition is unavailable in this browser. Type your question below.'); setPhase('error'); return }
     stopAudio(); setError(''); setVoiceNote(''); setQuestion(''); setPhase('listening')
     recognition.current = mic
+    const opened = performance.now()
+    let wokeAt: number | null = null
+    if (!demo) wakeEye(session, false)   // someone is about to ask: the brain gets a frame and its connections ready
     void audioLevel.startMic()
     mic.lang = 'en-US'; mic.continuous = false; mic.interimResults = true
     let finalText = ''
@@ -151,7 +186,7 @@ function Phone({ session, demo, sessionOnline, menu, settingsOpen, onSettings }:
       if (alive.current) setQuestion(text)
       finalText = text
       // The moment "Iris" is recognised, before the question is finished, the eye on the glasses opens.
-      if (!woke && !demo && stripWakeWord(text) !== null) { woke = true; wakeEye(session) }
+      if (!woke && !demo && stripWakeWord(text) !== null) { woke = true; wokeAt = performance.now(); wakeEye(session) }
     }
     mic.onerror = event => {
       failed = true
@@ -165,7 +200,8 @@ function Phone({ session, demo, sessionOnline, menu, settingsOpen, onSettings }:
       if (!alive.current || failed) return
       const text = wakeWord ? stripWakeWord(finalText) : finalText.trim()
       if (!text) { setPhase('idle'); setVoiceNote(wakeWord ? 'Say “Iris” followed by your question. Tap to listen again.' : 'No question heard. Tap to try again.'); return }
-      void submit(text)
+      const now = performance.now()
+      void submit(text, { listen_ms: Math.round(now - opened), ...(wokeAt === null ? {} : { wake_ms: Math.round(now - wokeAt) }) })
     }
     try { mic.start(); micTimer.current = setTimeout(() => mic.stop(), 20000) }
     catch { audioLevel.stop(); recognition.current = null; setPhase('error'); setError('Microphone could not start. Try again or type below.') }

@@ -101,6 +101,6 @@ Search is one embedding call and one database query, so it answers well inside t
 
 ## Tuning
 
-`DEDUPE_THRESHOLD` (0.95) is how similar a frame must be to the last saved one to be skipped. Lower it if near-identical frames pile up, raise it if real changes get skipped.
+A frame is skipped when it both looks and reads like the session's last saved moment. The brain sends a 64-bit difference hash of the photo (`image_hash` in `brain/memory/client.py`); on real frames the same view moves 0 to 9 bits and a different scene 22 to 37. The same picture (6 bits or fewer) with similar words (above 0.80) is skipped, and a slightly moved view (14 bits or fewer) needs near-identical words: `DEDUPE_THRESHOLD` (0.95). Lower that if near-identical frames pile up, raise it if real changes get skipped. A different scene described the same way is kept. The rule is `save_memory_if_new` in `db/schema.sql`; check it against the live database with `node scripts/check_dedupe.mjs` (rolled back, nothing saved).
 
-`SEARCH_MIN_SIMILARITY` (0.30) is the floor for counting a frame as a match by meaning alone. Run the seed script with real photos and look at the `sim=` numbers to set it. Changing either means redeploying the function.
+`SEARCH_MIN_SIMILARITY` (0.45) is the floor for counting a frame as a match by meaning alone, and it only applies when no moment names the object: if any does, the newest of those is the answer. Run the seed script with real photos and look at the `sim=` numbers to set it. Changing either means redeploying the function.

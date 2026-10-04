@@ -123,6 +123,20 @@ def split_answer(text):
     return lines[0][:40], " ".join(lines[1:])
 
 
+SENTENCE_END = re.compile(r"[.!?][\"')\]]?\s+(?=\S)")
+
+
+def first_sentence(spoken, min_chars=20):
+    """The first whole sentence of a spoken answer that is still being written, or "" until there is one.
+    A sentence only counts once more text follows it, so "3.5 grams" and the reply's last word never end
+    one early. Very short openers ("Yes.") are kept with the sentence after them."""
+    for m in SENTENCE_END.finditer(spoken or ""):
+        sentence = spoken[:m.end()].strip()
+        if len(sentence) >= min_chars:
+            return sentence
+    return ""
+
+
 if __name__ == "__main__":
     assert pick_mode("Iris, how much protein is in this?") == ("ask", "how much protein is in this?")
     assert pick_mode("hey iris what is this?")[0] == "identify"
@@ -137,4 +151,11 @@ if __name__ == "__main__":
     assert DEICTIC.search("is this jacket warm enough") and not DEICTIC.search("is it going to rain")
     assert "Live data" in build_ask("weather?", {}, live_note="62F, clear") and "Live data" not in build_ask("q", {})
     assert "said_before" in WATCH and "Already told the wearer" in build_watch({"said": ["19:02 Line 2: 7x8 is 56"]})
+    assert first_sentence("That bar has about 12 grams") == ""                       # still being written
+    assert first_sentence("That bar has about 12 grams.") == ""                      # might be "12 grams. " or the end
+    assert first_sentence("That bar has about 12 grams. It") == "That bar has about 12 grams."
+    assert first_sentence("It weighs 3.5 grams, about a") == ""                      # a decimal point ends nothing
+    assert first_sentence("Yes. It has 12 grams of protein. That") == "Yes. It has 12 grams of protein."
+    assert first_sentence(split_answer("12g protein\nThat bar has 12 grams! Enjoy")[1]) == "That bar has 12 grams!"
+    assert first_sentence("") == "" and first_sentence(None) == ""
     print("prompts ok")

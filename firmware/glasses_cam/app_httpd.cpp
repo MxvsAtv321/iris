@@ -478,6 +478,8 @@ static esp_err_t status_handler(httpd_req_t *req) {
   p += snprintf(p, end - p, "\"wpc\":%u,", s->status.wpc);
   p += snprintf(p, end - p, "\"raw_gma\":%u,", s->status.raw_gma);
   p += snprintf(p, end - p, "\"lenc\":%u,", s->status.lenc);
+  // Iris: the chip's own temperature in Celsius, so the brain can watch how hot the board runs while it streams.
+  p += snprintf(p, end - p, "\"temp_c\":%.1f,", temperatureRead());
   p += snprintf(p, end - p, "\"hmirror\":%u,", s->status.hmirror);
   p += snprintf(p, end - p, "\"vflip\":%u,", s->status.vflip);
   p += snprintf(p, end - p, "\"dcw\":%u,", s->status.dcw);
@@ -838,6 +840,11 @@ void startCameraServer() {
 
   config.server_port += 1;
   config.ctrl_port += 1;
+  // Iris: the stream serves one viewer at a time. Without these, a viewer that vanished without closing (a laptop
+  // that changed networks, a phone that slept) holds the stream until TCP gives up, and nobody else gets a frame.
+  config.send_wait_timeout = 3;
+  config.recv_wait_timeout = 3;
+  config.lru_purge_enable = true;
   log_i("Starting stream server on port: '%u'", config.server_port);
   if (httpd_start(&stream_httpd, &config) == ESP_OK) {
     httpd_register_uri_handler(stream_httpd, &stream_uri);

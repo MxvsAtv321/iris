@@ -75,8 +75,32 @@ def _iso(captured_at: Any) -> str | None:
     return str(captured_at)
 
 
+def image_hash(jpeg: bytes) -> str | None:
+    """A 64-bit difference hash of the picture, as 16 hex characters, or None if it can't be made.
+
+    The picture is shrunk to 9x8 grey pixels and each bit says whether a pixel is brighter than the
+    one to its right. The same view through noise, a brightness change or a small shift of the
+    camera moves 0 to 9 of the 64 bits; a different scene moves 20 to 40. Memory uses the distance
+    to tell a repeat of the last frame from a new scene that happens to be described the same way.
+    Needs Pillow; without it no hash is sent and memory compares descriptions alone, as before.
+    """
+    try:
+        import io
+
+        from PIL import Image
+
+        px = Image.open(io.BytesIO(jpeg)).convert("L").resize((9, 8), Image.LANCZOS).tobytes()
+    except Exception:  # Pillow missing, or not a picture: memory falls back to descriptions
+        return None
+    bits = 0
+    for y in range(8):
+        for x in range(8):
+            bits = (bits << 1) | (px[y * 9 + x] > px[y * 9 + x + 1])
+    return f"{bits:016x}"
+
+
 def _ingest_headers(
-    token: str | None, session_id: str, description: str | None, captured_at: Any = None
+    token: str | None, session_id: str, description: str | None, captured_at: Any = None, jpeg: bytes | None = None
 ) -> dict[str, str] | None:
     token = token or os.environ.get("INGEST_TOKEN")
     if not token:
@@ -90,14 +114,24 @@ def _ingest_headers(
         headers["X-Description"] = quote(description, safe="")
     if captured_at is not None:
         headers["X-Captured-At"] = _iso(captured_at)
+    picture = image_hash(jpeg) if jpeg else None
+    if picture:
+        headers["X-Image-Hash"] = picture
     return headers
 
 
-def _search_body(session_id: str, question: str, target: str | None) -> dict[str, Any]:
+def _search_body(session_id: str, question: str, target: str | None, quiet: bool = False) -> dict[str, Any]:
     body: dict[str, Any] = {"session_id": session_id, "question": question}
     if target:
         body["target"] = target
+    if quiet:
+        body["quiet"] = True     # Iris asking itself: not logged, so the garden doesn't fly to the answer
     return body
+
+
+# httpx drops an idle connection after 5 s by default, so every save and search paid for a new TLS
+# handshake (about 0.5 s to Neon). Kept for two minutes, a busy session reuses one connection.
+KEEPALIVE = httpx.Limits(keepalive_expiry=120)
 
 
 class _Base:
@@ -110,8 +144,8 @@ class _Base:
     def enabled(self) -> bool:
         return self.base is not None
 
-    def _headers_or_warn(self, session_id: str, description: str | None, captured_at: Any = None) -> dict[str, str] | None:
-        headers = _ingest_headers(self.token, session_id, description, captured_at)
+    def _headers_or_warn(self, session_id: str, description: str | None, captured_at: Any = None, jpeg: bytes | None = None) -> dict[str, str] | None:
+        headers = _ingest_headers(self.token, session_id, description, captured_at, jpeg)
         if headers is None and not self._warned_token:
             log.warning("INGEST_TOKEN isn't set, so frames aren't being saved.")
             self._warned_token = True
@@ -121,7 +155,7 @@ class _Base:
 class MemoryClient(_Base):
     def __init__(self, base_url: str | None = None, ingest_token: str | None = None):
         super().__init__(base_url, ingest_token)
-        self.http = httpx.Client()
+        self.http = httpx.Client(limits=KEEPALIVE)
 
     def ingest(self, session_id: str, jpeg: bytes, description: str | None = None, captured_at: Any = None) -> dict | None:
         """Save a frame. Returns {saved, id, description, ms}, or None if memory is off or the call failed.
@@ -133,7 +167,7 @@ class MemoryClient(_Base):
         """
         if not self.enabled:
             return None
-        headers = self._headers_or_warn(session_id, description, captured_at)
+        headers = self._headers_or_warn(session_id, description, captured_at, jpeg)
         if headers is None:
             return None
         try:
@@ -187,14 +221,14 @@ class AsyncMemoryClient(_Base):
         # thread), open a fresh pool there instead of failing.
         loop = asyncio.get_running_loop()
         if self._http is None or self._loop is not loop:
-            self._http = httpx.AsyncClient()
+            self._http = httpx.AsyncClient(limits=KEEPALIVE)
             self._loop = loop
         return self._http
 
     async def ingest(self, session_id: str, jpeg: bytes, description: str | None = None, captured_at: Any = None) -> dict | None:
         if not self.enabled:
             return None
-        headers = self._headers_or_warn(session_id, description, captured_at)
+        headers = self._headers_or_warn(session_id, description, captured_at, jpeg)
         if headers is None:
             return None
         try:
@@ -205,12 +239,22 @@ class AsyncMemoryClient(_Base):
             log.warning("memory ingest failed: %s", e)
             return None
 
-    async def search(self, session_id: str, question: str, target: str | None = None) -> dict:
+    async def warm(self) -> bool:
+        """Touch the memory function so it and the connection to it stay warm. Never raises."""
+        if not self.enabled:
+            return False
+        try:
+            return (await self.http.get(f"{self.base}/health", timeout=3)).status_code == 200
+        except Exception as e:
+            log.info("memory warm failed: %s", e)
+            return False
+
+    async def search(self, session_id: str, question: str, target: str | None = None, quiet: bool = False) -> dict:
         if not self.enabled:
             return empty_search(target, "memory is off")
         started = time.monotonic()
         try:
-            r = await self.http.post(f"{self.base}/search", json=_search_body(session_id, question, target), timeout=SEARCH_TIMEOUT_S)
+            r = await self.http.post(f"{self.base}/search", json=_search_body(session_id, question, target, quiet), timeout=SEARCH_TIMEOUT_S)
             r.raise_for_status()
             return r.json()
         except Exception as e:
@@ -227,3 +271,36 @@ class AsyncMemoryClient(_Base):
         except Exception as e:
             log.warning("memory moments failed: %s", e)
             return []
+
+
+if __name__ == "__main__":
+    # Self-check, no network: `python brain/memory/client.py`. Needs Pillow.
+    import io
+
+    from PIL import Image, ImageDraw, ImageEnhance
+
+    def jpeg_of(img, quality=85):
+        buf = io.BytesIO()
+        img.save(buf, "JPEG", quality=quality)
+        return buf.getvalue()
+
+    def bits(a, b):
+        return bin(int(image_hash(a), 16) ^ int(image_hash(b), 16)).count("1")
+
+    desk = Image.new("RGB", (800, 600), (200, 190, 170))
+    d = ImageDraw.Draw(desk)
+    d.rectangle((120, 260, 420, 520), fill=(40, 40, 60))
+    d.ellipse((500, 120, 700, 320), fill=(230, 80, 60))
+    d.rectangle((0, 540, 800, 600), fill=(90, 60, 40))
+    door = Image.new("RGB", (800, 600), (60, 70, 90))
+    ImageDraw.Draw(door).rectangle((300, 60, 520, 600), fill=(220, 215, 200))
+    a = jpeg_of(desk)
+    assert len(image_hash(a)) == 16 and image_hash(a) == image_hash(a)
+    assert bits(a, jpeg_of(desk, 50)) <= 2                                             # recompressed
+    assert bits(a, jpeg_of(ImageEnhance.Brightness(desk).enhance(1.1))) <= 2           # the light changed a little
+    assert bits(a, jpeg_of(desk.crop((16, 6, 800, 600)).resize((800, 600)))) <= 14     # the camera moved a little
+    assert bits(a, jpeg_of(door)) >= 20                                                # a different scene
+    assert image_hash(b"not a picture") is None
+    assert _ingest_headers("t", "s", "d", None, a)["X-Image-Hash"] == image_hash(a)
+    assert "X-Image-Hash" not in _ingest_headers("t", "s", "d", None, b"not a picture")
+    print("memory client ok")

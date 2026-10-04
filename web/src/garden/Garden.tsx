@@ -1,8 +1,10 @@
 // /garden?session=<id>
 //
-// The judge's own memories as a garden. Asking where something is, whether
-// typed here or said out loud to the glasses through the phone page, makes
-// the matching bud bloom, glides to it, and opens that moment in 3D.
+// Iris's memory as a tree of life. Every decision is a leaf, every saved
+// memory a gold blossom, and new ones sprout as Iris works. Asking where
+// something is, whether typed here or said out loud to the glasses through
+// the phone page, flies to the matching blossom and opens that moment in 3D.
+// /garden?demo shows the tree with scripted moments and nothing connected.
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
@@ -10,15 +12,18 @@ import { OrbitControls, Text } from "@react-three/drei";
 import { XR, XROrigin, createXRStore, useXR } from "@react-three/xr";
 import type { Moment } from "./api";
 import { latestSearch, listMoments, memoryConfigured, search } from "./api";
+import { blossomFor, type Leaf } from "./canopy";
 // The depth model's library is large, so it loads after the garden is on screen.
 const depth = () => import("./depth");
-import { GardenScene } from "./GardenScene";
 import { MomentScene } from "./MomentScene";
 import { SafeBoundary } from "./SafeBoundary";
 import { FONT_REGULAR, getTheme } from "./theme";
 import { CardboardRig, requestMotionPermission } from "./Cardboard";
-import { budPosition, type Vec3 } from "./layout";
+import { HOME, TreeScene } from "./tree/TreeScene";
+import type { Vec3 } from "./tree/grow";
+import { leafCenter } from "./tree/places";
 import { timeAgo } from "./time";
+import { useCanopy } from "./useCanopy";
 import "./garden.css";
 
 const xrStore = createXRStore({
@@ -29,8 +34,15 @@ const xrStore = createXRStore({
 
 const MOMENTS_POLL_MS = 8000;
 const SEARCH_POLL_MS = 1500;
-const OPEN_DELAY_MS = 1800; // let the glide to the bud play before stepping inside
+const OPEN_DELAY_MS = 2600; // let the flight to the blossom play before stepping inside
 const DIORAMA_POS: Vec3 = [0, 1.5, -2.2];
+
+const DID: Record<Leaf["kind"], string> = {
+  silent: "Stayed silent",
+  display: "Showed a line",
+  speak: "Spoke",
+  blossom: "Remembered",
+};
 
 type SpeechCtor = new () => {
   lang: string;
@@ -44,8 +56,10 @@ const Speech: SpeechCtor | undefined =
   (window as unknown as { SpeechRecognition?: SpeechCtor; webkitSpeechRecognition?: SpeechCtor }).SpeechRecognition ??
   (window as unknown as { webkitSpeechRecognition?: SpeechCtor }).webkitSpeechRecognition;
 
-function sessionFromUrl(): string | null {
-  return new URLSearchParams(window.location.search).get("session");
+function fromUrl() {
+  const q = new URLSearchParams(window.location.search);
+  const demo = q.has("demo");
+  return { sessionId: q.get("session") ?? (demo ? "demo" : null), demo, bare: q.get("canopy") === "bare" };
 }
 
 /** Puts the screen camera straight in front of a moment, whatever angle the garden left it at. */
@@ -82,16 +96,16 @@ function BackButton({ onBack, cardboard }: { onBack: () => void; cardboard: bool
 }
 
 export function Garden() {
-  const sessionId = useMemo(sessionFromUrl, []);
+  const { sessionId, demo, bare } = useMemo(fromUrl, []);
   const [moments, setMoments] = useState<Moment[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { canopy, tie } = useCanopy(sessionId, demo, moments);
 
   const [foundId, setFoundId] = useState<number | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [openId, setOpenId] = useState<number | null>(null);
   const [depthUrl, setDepthUrl] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [hover, setHover] = useState<{ leaf: Leaf; x: number; y: number } | null>(null);
 
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
@@ -104,25 +118,27 @@ export function Garden() {
   const openTimer = useRef<number | undefined>(undefined);
   const momentsRef = useRef<Moment[]>([]);
   momentsRef.current = moments;
+  const canopyRef = useRef(canopy);
+  canopyRef.current = canopy;
 
+  const useMemory = memoryConfigured && !demo && !!sessionId;
   const byId = useCallback((id: number | null) => momentsRef.current.find((m) => m.id === id) ?? null, []);
+  const blossomOf = (id: number | null) => (id === null ? null : (canopy.leaves.find((l) => l.momentId === id) ?? null));
   const selected = byId(selectedId);
+  const selectedLeaf = blossomOf(selectedId);
   const open = byId(openId);
 
   // ------------------------------------------------------------- data
 
+  // Memory being down is not an error here: the tree keeps growing from live decisions.
   const refresh = useCallback(async () => {
-    if (!sessionId || !memoryConfigured) return;
+    if (!useMemory || !sessionId) return;
     try {
-      const list = await listMoments(sessionId);
-      setMoments(list);
-      setError(null);
+      setMoments(await listMoments(sessionId));
     } catch {
-      setError("Can't reach memory. Check that the memory function is deployed and VITE_MEMORY_URL points at it.");
-    } finally {
-      setLoaded(true);
+      /* try again on the next poll */
     }
-  }, [sessionId]);
+  }, [sessionId, useMemory]);
 
   useEffect(() => {
     refresh();
@@ -131,10 +147,9 @@ export function Garden() {
   }, [refresh]);
 
   useEffect(() => {
-    if (!sessionId || !memoryConfigured) return;
     navigator.xr?.isSessionSupported("immersive-vr").then(setVrSupported).catch(() => setVrSupported(false));
-    depth().then((d) => d.warmDepthModel()).catch(() => setStatus("Depth preview is unavailable. You can still browse memories.")); // start the model download while the judge looks around
-  }, [sessionId]);
+    if (useMemory) depth().then((d) => d.warmDepthModel()).catch(() => {}); // start the model download while the judge looks around
+  }, [useMemory]);
 
   // ------------------------------------------------------------- moments
 
@@ -159,31 +174,34 @@ export function Garden() {
     setStatus(null);
   }, []);
 
-  /** A search found something, from here or from the glasses. Bloom, glide, then step inside. */
+  /** A search found something, from here or from the glasses. Fly to its blossom, then step inside. */
   const showFound = useCallback(
     async (momentId: number | null, target: string) => {
-      if (!momentId) {
+      window.clearTimeout(openTimer.current);
+      if (momentId === null) {
         setFoundId(null);
         setStatus(`Nothing in memory looks like ${target} yet.`);
         return;
       }
-      if (!byId(momentId)) await refresh();
+      if (useMemory && !byId(momentId)) await refresh();
       const m = byId(momentId);
-      if (!m) return;
+      const leaf = canopyRef.current.leaves.find((l) => l.momentId === momentId);
 
       closeMoment();
-      setFoundId(m.id);
-      setSelectedId(m.id);
-      setStatus(`Found ${target}. Seen ${timeAgo(m.captured_at)}.`);
+      setFoundId(momentId);
+      setSelectedId(momentId);
+      const when = m?.captured_at ?? (leaf ? new Date(leaf.at).toISOString() : null);
+      setStatus(when ? `Found ${target}. Seen ${timeAgo(when)}.` : `Found ${target}.`);
+      if (!m) return; // a blossom with no photo behind it (demo, or memory still offline) can be flown to but not opened
       depth().then((d) => d.depthUrlFor(m)).catch(() => {}); // start depth now so it's ready on arrival
       openTimer.current = window.setTimeout(() => openMoment(m), OPEN_DELAY_MS);
     },
-    [byId, refresh, closeMoment, openMoment],
+    [byId, refresh, closeMoment, openMoment, useMemory],
   );
 
   // Follow questions asked anywhere for this session.
   useEffect(() => {
-    if (!sessionId || !memoryConfigured) return;
+    if (!useMemory || !sessionId) return;
     let stopped = false;
     const poll = async () => {
       try {
@@ -196,7 +214,7 @@ export function Garden() {
           showFound(s.moment_id, s.target);
         }
       } catch {
-        /* the moments poll reports connection problems */
+        /* memory is unreachable; the next poll tries again */
       }
     };
     poll();
@@ -205,18 +223,31 @@ export function Garden() {
       stopped = true;
       window.clearInterval(t);
     };
-  }, [sessionId, showFound]);
+  }, [sessionId, showFound, useMemory]);
+
+  /** Without memory search, match the question against the blossoms already on the tree. */
+  const askTheTree = (q: string) => {
+    const leaf = blossomFor(canopyRef.current, q);
+    const target = leaf?.keywords.find((w) => q.toLowerCase().includes(w)) ?? "that";
+    return showFound(leaf?.momentId ?? null, target);
+  };
 
   const ask = async (q: string) => {
     if (!sessionId || !q.trim()) return;
     setAsking(true);
     try {
-      const r = await search(sessionId, q.trim());
-      lastSearchId.current = r.search_id ?? lastSearchId.current; // the poll shouldn't replay our own question
-      await showFound(r.moment?.id ?? null, r.target);
+      if (!useMemory) {
+        await askTheTree(q);
+      } else {
+        const r = await search(sessionId, q.trim());
+        lastSearchId.current = r.search_id ?? lastSearchId.current; // the poll shouldn't replay our own question
+        await showFound(r.moment?.id ?? null, r.target);
+        if (r.moment) tie(r.moment.id, r.top.map((m) => m.id));
+      }
       setQuestion("");
     } catch {
-      setStatus("Memory didn't answer in time. Ask again.");
+      await askTheTree(q); // memory didn't answer in time, so look through what the tree already holds
+      setQuestion("");
     } finally {
       setAsking(false);
     }
@@ -253,23 +284,34 @@ export function Garden() {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   };
 
+  /** A blossom was clicked, tapped or gazed at: select it, and a second time step inside. */
+  const pick = (momentId: number) => {
+    const m = byId(momentId);
+    if (selectedId === momentId && m) openMoment(m);
+    else setSelectedId(momentId);
+  };
+
   const onGaze = (id: number | string) => {
     if (id === "__back") return closeMoment();
-    if (typeof id !== "number") return;
-    const m = byId(id);
-    if (!m) return;
-    if (selectedId === m.id) openMoment(m);
-    else setSelectedId(m.id);
+    if (typeof id === "number") pick(id);
+  };
+
+  const closeCard = () => {
+    window.clearTimeout(openTimer.current);
+    setSelectedId(null);
+    setFoundId(null);
+    setStatus(null);
   };
 
   // Where the Cardboard viewer's head should be.
   const cardboardEye: Vec3 = useMemo(() => {
     if (openId) return [0, 1.6, 0.3];
-    const i = moments.findIndex((m) => m.id === (selectedId ?? foundId));
-    if (i < 0) return [0, 1.6, 1.5];
-    const p = budPosition(i, moments.length);
-    return [p[0] * 0.6, 1.6, p[2] + 1.4];
-  }, [openId, selectedId, foundId, moments]);
+    const leaf = canopy.leaves.find((l) => l.momentId !== null && l.momentId === (selectedId ?? foundId));
+    if (!leaf) return [0, HOME.height, HOME.distance];
+    // Cardboard faces the tree from the south, so stand south of the blossom with it straight ahead.
+    const p = leafCenter(leaf);
+    return [p[0], p[1], p[2] + 7];
+  }, [openId, selectedId, foundId, canopy.leaves]);
 
   // ------------------------------------------------------------- render
 
@@ -283,20 +325,14 @@ export function Garden() {
       </div>
     );
   }
-  if (!memoryConfigured) {
-    return (
-      <div className="garden garden-empty">
-        <main className="garden-empty-body">
-          <h1>Memory garden</h1>
-          <p>Set VITE_MEMORY_URL in the root .env to the memory function's address, then restart the dev server.</p>
-        </main>
-      </div>
-    );
-  }
+
+  const focusMoment = selectedId ?? foundId;
+  const blossoms = canopy.leaves.reduce((n, l) => n + (l.kind === "blossom" ? 1 : 0), 0);
+  const leaves = canopy.leaves.length - blossoms;
 
   return (
     <div className={`garden ${cardboard ? "is-cardboard" : ""}`}>
-      <Canvas camera={{ position: [0, 1.5, 1.1], fov: 60 }} dpr={[1, 2]}>
+      <Canvas camera={{ position: [0, HOME.height, HOME.distance], fov: 60 }} dpr={[1, 1.5]}>
         <XR store={xrStore}>
           {open && depthUrl ? (
             <>
@@ -327,13 +363,17 @@ export function Garden() {
               )}
             </>
           ) : (
-            <GardenScene
-              moments={moments}
-              foundId={foundId}
-              selectedId={selectedId}
-              onSelect={(m) => (selectedId === m.id ? openMoment(m) : setSelectedId(m.id))}
-              cardboard={cardboard}
-            />
+            <Suspense fallback={null}>
+              <TreeScene
+                canopy={canopy}
+                focusId={focusMoment === null ? null : `m:${focusMoment}`}
+                foundId={foundId === null ? null : `m:${foundId}`}
+                cardboard={cardboard}
+                standing={!bare}
+                onHover={(leaf, x, y) => setHover(leaf ? { leaf, x, y } : null)}
+                onPick={(leaf) => leaf.momentId !== null && pick(leaf.momentId)}
+              />
+            </Suspense>
           )}
           {cardboard && <CardboardRig eye={cardboardEye} onGaze={onGaze} />}
         </XR>
@@ -344,22 +384,40 @@ export function Garden() {
           <header className="masthead">
             <span className="wordmark">Iris</span>
             <span className="count">
-              {loaded ? (moments.length === 1 ? "1 moment remembered" : `${moments.length} moments remembered`) : "Opening memory"}
+              {leaves === 1 ? "1 moment" : `${leaves} moments`} · {blossoms === 1 ? "1 memory" : `${blossoms} memories`}
             </span>
           </header>
 
-          {error && <p className="notice notice-error">{error}</p>}
-          {!error && loaded && moments.length === 0 && (
-            <p className="notice">Nothing remembered yet. Put on the glasses and look around, and moments will grow here.</p>
+          {!openId && (
+            <ul className="legend" aria-label="What the leaves mean">
+              <li className="faint"><i />stayed silent</li>
+              <li className="bright"><i />spoke</li>
+              <li className="gold"><i />remembered</li>
+            </ul>
+          )}
+          {demo && !openId && <p className="demo-tag">Demo: scripted moments, nothing connected</p>}
+
+          {hover && !openId && (
+            <div
+              className={`leaf-card ${hover.leaf.kind === "blossom" ? "blossom" : ""} ${hover.x > window.innerWidth * 0.62 ? "flip" : ""}`}
+              style={{ left: hover.x, top: hover.y }}
+              role="status"
+            >
+              <p className="did">
+                {DID[hover.leaf.kind]} <span>· {timeAgo(new Date(hover.leaf.at).toISOString())}</span>
+              </p>
+              {hover.leaf.line && <p className="line">{hover.leaf.kind === "blossom" ? hover.leaf.line : `“${hover.leaf.line}”`}</p>}
+              {hover.leaf.kind !== "blossom" && hover.leaf.reason && <p className="why">{hover.leaf.reason}</p>}
+            </div>
           )}
 
-          {selected && !open && (
+          {selectedLeaf && !open && (
             <section className="moment-card" aria-live="polite">
-              <p className="when">Seen {timeAgo(selected.captured_at)}</p>
-              <p className="what">{selected.description}</p>
+              <p className="when">Seen {timeAgo(new Date(selectedLeaf.at).toISOString())}</p>
+              <p className="what">{selectedLeaf.line}</p>
               <div className="actions">
-                <button className="primary" onClick={() => openMoment(selected)}>Step inside</button>
-                <button onClick={() => setSelectedId(null)}>Close</button>
+                {selected && <button className="primary" onClick={() => openMoment(selected)}>Step inside</button>}
+                <button onClick={closeCard}>Close</button>
               </div>
             </section>
           )}

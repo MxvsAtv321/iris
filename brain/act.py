@@ -121,15 +121,15 @@ async def _json(http, method, url, timeout, **kw):
 async def refine(text):
     """One word from the model when the rules landed on 'next'. None if the model is down."""
     try:
-        import llm
-        raw, _ = await llm.chat(llm.messages(
+        import agent_kit
+        raw, _ = await agent_kit.think(     # ASI:One reasons for the agent; the brain's model steps in if it can't
             "Classify the intent of a message to an assistant in someone's glasses. "
             "Reply with exactly one word: recall, show, conditions, or next. "
             "recall = where or when they saw something. "
             "show = put a specific line on the glasses. "
             "conditions = weather, going outside, a jacket, tonight's sky, a launch, or the ISS. "
             "next = what to do about the thing they are looking at.",
-            text or ""), timeout=3)
+            text or "", timeout=3, max_tokens=20)
     except Exception as e:  # noqa: BLE001
         log.info("intent refine skipped: %s", e)
         return None
