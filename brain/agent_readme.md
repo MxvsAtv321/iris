@@ -1,5 +1,8 @@
 # Iris Act
 
+![tag:innovationlab](https://img.shields.io/badge/innovationlab-3D8BD3)
+![tag:hackathon](https://img.shields.io/badge/hackathon-5F43F1)
+
 Use Iris Act when someone is wearing Iris glasses, or asks what to do about the thing they are looking at, whether to go outside, what they can see in the night sky, the next SpaceX launch, where the ISS is, or where they left something they saw earlier.
 
 Iris is a clip-on camera and a tiny display on a pair of glasses. This agent is the part that acts on what those glasses see.
@@ -26,3 +29,15 @@ Iris is a clip-on camera and a tiny display on a pair of glasses. This agent is 
 ## What it will not do
 
 It answers from live data and from what the glasses have seen. It does not book anything, send messages, or spend money.
+
+## How it works
+
+- **Reasoning:** rules decide the common requests, and ASI:One decides the intent when the rules can't.
+- **Tools:** live weather (Open-Meteo), launches (Launch Library 2), the ISS position, Iris's memory search, and the glasses display.
+- **Protocol:** Agent Chat Protocol. One message in, one answer out, and the session ends.
+
+## Keywords
+
+smart glasses, wearable, weather, night sky, SpaceX launch, ISS, memory, what should I do, Iris
+
+Built at MHacks 2026 by the Iris team. Its sibling agents are Iris Memory and Iris Restraint.

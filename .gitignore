@@ -25,7 +25,10 @@ build/
 # brain runtime state (sessions, daily model budget)
 brain/state.json
 brain/state.tmp
-brain/.agent_seed
+brain/.agent_seed*
 
 # uagents identity store, created when the Act agent runs
 agent1*/
+
+# logs and pid files of the Agentverse agents (scripts/agents.sh)
+brain/.agents/

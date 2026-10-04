@@ -31,7 +31,7 @@ PROVIDERS = {
     "openai": ("https://api.openai.com/v1/", "OPENAI_API_KEY"),
     "anthropic": ("https://api.anthropic.com/v1/", "ANTHROPIC_API_KEY"),   # its OpenAI-compatible endpoint; takes images
     "openrouter": ("https://openrouter.ai/api/v1/", "OPENROUTER_API_KEY"),
-    "asi": ("https://api.asi1.ai/v1/", "ASI_API_KEY"),   # Fetch.ai; text only until it documents image input
+    "asi": ("https://api.asi1.ai/v1/", "ASI_API_KEY"),   # Fetch.ai ASI:One: asi1-mini (fastest), asi1, asi1-ultra
 }
 PRIMARY = os.getenv("PRIMARY_MODEL") or "xai:grok-4.20-non-reasoning"
 WATCH = os.getenv("WATCH_MODEL") or PRIMARY
