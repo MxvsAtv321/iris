@@ -49,46 +49,6 @@ h1,h2,h3 { font-weight: 500 }
 .demo-toggle { display: flex; gap: 8px; align-items: center; cursor: pointer }
 .demo-banner { border: 1px solid var(--iris-accent-border); background: var(--iris-raised); color: var(--iris-accent); padding: 12px 18px; border-radius: 18px; font-size: 12px; line-height: 1.6; margin-bottom: 20px }
 .eyebrow{display:none}
-.connection{display:inline-flex;gap:8px;align-items:center;padding:8px 0;font-size:12px;color:var(--iris-muted);white-space:nowrap}
-.connection i { width: 5px; height: 5px; border-radius: 50%; background: #6d687e }
-.connection.online i{background:#b4c5b4;box-shadow:none}
-.panel{border:1px solid var(--iris-border);border-radius:12px;background:var(--iris-surface)}
-.dashboard{padding:32px 0 56px}
-.dashboard-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; gap: 20px }
-.dashboard h1{font-size:32px;font-weight:500;line-height:1.2;letter-spacing:-1px;margin:0 0 10px}
-.dashboard-heading p:not(.eyebrow){font-size:14px;line-height:1.6;color:var(--iris-muted)}
-.metrics-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin-bottom:32px;border-top:1px solid var(--iris-border);border-bottom:1px solid var(--iris-border)}
-.metric{padding:26px 24px;background:transparent;border:0;border-right:1px solid var(--iris-border);border-radius:0;box-shadow:none}
-.metric>p{font-size:13px;font-weight:400;color:var(--iris-muted)}
-.metric>p>span { color: var(--iris-accent); font-size: 16px }
-.metric strong{display:block;font-size:40px;line-height:1;letter-spacing:-1.5px;font-weight:400;margin:20px 0 14px;font-variant-numeric:tabular-nums}
-.metric small{font-size:20px;color:var(--iris-muted);letter-spacing:-.5px}
-.metric>span { display: block; font-size: 11px; line-height: 1.6; color: var(--iris-muted) }
-.feed-panel{overflow:hidden;box-shadow:none}
-.feed-heading { display: flex; justify-content: space-between; padding: 26px; align-items: center; gap: 20px }
-.feed-heading h2 { font-size: 18px; letter-spacing: -.4px }
-.feed-heading p { font-size: 11px; color: var(--iris-muted); margin-top: 7px; overflow-wrap: anywhere }
-.secondary{padding:10px 14px;border:1px solid var(--iris-border);background:transparent;color:var(--iris-text);border-radius:8px;font-size:12px;white-space:nowrap}
-.secondary:hover{background:#ffffff09}
-.filters { display: flex; align-items: center; gap: 6px; padding: 0 26px 20px; border-bottom: 1px solid var(--iris-border); flex-wrap: wrap }
-.filters button{padding:10px 14px;border-radius:6px;color:var(--iris-muted);background:transparent;font-size:12px;text-transform:capitalize}
-.filters button:hover { color: var(--iris-text); background: #ffffff05 }
-.filters button.selected{color:var(--iris-text);background:#ffffff0c;box-shadow:none}
-.filters>span { font-size: 9px; letter-spacing: .8px; color: var(--iris-accent); margin-left: auto }
-.feed-row{display:grid;grid-template-columns:95px 112px minmax(0,1fr);gap:18px;padding:18px 26px;border-bottom:1px solid var(--iris-border);align-items:start;font-size:13px}
-.feed-row:last-child { border: 0 }
-.table-labels{font-size:10px;letter-spacing:.5px;font-weight:500;color:var(--iris-muted);padding-top:12px;padding-bottom:12px;background:#ffffff02}
-.feed-row time { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--iris-muted); padding-top: 4px }
-.badge{border:1px solid var(--iris-border);color:var(--iris-muted);border-radius:5px;padding:5px 8px;width:fit-content;font-size:11px}
-.badge.display,.badge.answer { color: var(--iris-accent); border-color: var(--iris-accent-border); background: #c1b3dd08 }
-.badge.speak{color:#d2c8ed;border-color:#b7a6da33;background:#b7a6da0c;box-shadow:none}
-.feed-row p { line-height: 1.6; overflow-wrap: anywhere }
-.feed-row div>span { display: block; margin-top: 5px; color: var(--iris-muted); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere }
-.feed-empty { padding: 65px 20px; text-align: center }
-.feed-empty>span { color: var(--iris-accent); font-size: 30px; text-shadow: 0 0 22px #9a78ff88 }
-.feed-empty h3 { font-size: 20px; margin: 15px 0 10px; font-weight: 400 }
-.feed-empty p,.dashboard-note { color: var(--iris-muted); font-size: 12px; line-height: 1.7 }
-.dashboard-note { margin-top: 20px; max-width: 850px }
 .wake-option { display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 11px; color: var(--iris-muted) }
 .error-box { border: 1px solid #d7a7bb44; background: #28132155; padding: 15px; border-radius: 18px; color: #ecd0df; font-size: 13px; line-height: 1.7 }
 .error-box button { display: block; background: transparent; color: var(--iris-text); text-decoration: underline; margin-top: 8px }
@@ -110,20 +70,6 @@ footer{display:flex;justify-content:space-between;gap:15px;padding:20px 0;border
   .session-bar form { gap: 7px }
   .session-bar input:not([type=checkbox]) { width: 102px }
   .session-bar label { font-size: 9px; letter-spacing: .8px }
-  .dashboard { padding-top: 24px }
-  .dashboard-heading { align-items: flex-start; flex-direction: column; gap: 16px }
-  .metrics-grid { grid-template-columns: 1fr; gap: 12px }
-  .metric { padding: 20px; border-radius: 18px }
-  .metric strong { margin: 18px 0 12px; font-size: 44px }
-  .feed-heading { padding: 20px }
-  .filters { padding: 0 14px 16px }
-  .filters>span { width: 100%; margin-top: 6px; margin-left: 6px }
-  .feed-row { grid-template-columns: 60px 74px minmax(0,1fr); padding: 16px 12px; gap: 8px }
-  .feed-row time { font-size: 9px }
-  .badge { font-size: 8px; letter-spacing: .2px; padding: 4px 6px }
-  .table-labels { font-size: 8px; letter-spacing: .4px }
-  .feed-row p { font-size: 11px }
-  .feed-row div>span { font-size: 10px }
   .empty-page { margin: 28px 0 45px; padding: 30px 22px; min-height: 55vh }
   footer { font-size: 7px; letter-spacing: .7px }
   .demo-banner { font-size: 10px }
@@ -132,5 +78,4 @@ footer{display:flex;justify-content:space-between;gap:15px;padding:20px 0;border
   *,*::before,*::after { animation: none!important; transition: none!important }
 }
 
-.metric:last-child{border-right:0}
-@media(max-width:700px){.metric{border-right:0;border-bottom:1px solid var(--iris-border);border-radius:0}.metric:last-child{border-bottom:0}.metrics-grid{gap:0}.feed-row{grid-template-columns:64px 80px minmax(0,1fr)}.topbar nav a{min-height:44px}.filters button{min-height:44px}}
+@media(max-width:700px){.topbar nav a{min-height:44px}}

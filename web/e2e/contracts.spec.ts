@@ -45,17 +45,20 @@ test('HTTP answer stays silent; WebSocket speech is deduplicated and falls back 
   await expect(page.getByText('WebSocket speech', { exact: true })).toBeVisible()
 })
 
-test('dashboard renders null precision and measurement basis', async ({ page }) => {
+test('dashboard shows gate accuracy only with its measurement basis', async ({ page }) => {
   let socket: WebSocketRoute
-  await page.route('**/api/session', route => route.fulfill({ json: {} }))
+  const sessionCalls: string[] = []
+  page.on('request', request => { if (request.url().includes('/api/session')) sessionCalls.push(request.method()) })
+  await page.route('**/api/trace', route => route.fulfill({ json: { session_id: 'judge-01', events: [], metrics: null } }))
   await page.routeWebSocket('**/api/ws', ws => { socket = ws })
   await page.goto('/dashboard')
   await expect.poll(() => !!socket).toBe(true)
-  const event = { type: 'metrics', session_id: 'judge-01', at: new Date().toISOString(),
-    gate_precision: null as number | null, answer_latency_ms_p50: null, gate_precision_basis: null as string | null }
+  const event = { type: 'metrics', session_id: 'judge-01', at: new Date().toISOString(), gate_precision: null as number | null,
+    gate_accuracy: null as number | null, answer_latency_ms_p50: null, gate_precision_basis: null as string | null }
   socket!.send(JSON.stringify(event))
-  await expect(page.getByText('not measured yet', { exact: true })).toBeVisible()
-  socket!.send(JSON.stringify({ ...event, gate_precision: 0.9, gate_precision_basis: 'measured on 10 test photos' }))
-  await expect(page.getByText('measured on 10 test photos', { exact: true })).toBeVisible()
-  await expect(page.getByText('90%', { exact: true })).toBeVisible()
+  await expect(page.getByText('Gate accuracy. Not measured on test photos yet.', { exact: true })).toBeVisible()
+  socket!.send(JSON.stringify({ ...event, gate_precision: 1, gate_accuracy: 0.9, gate_precision_basis: 'measured on 10 test photos' }))
+  await expect(page.getByText('Gate accuracy, measured on 10 test photos', { exact: true })).toBeVisible()
+  await expect(page.locator('.mind-numbers')).toContainText('90%')
+  expect(sessionCalls).toEqual([])
 })

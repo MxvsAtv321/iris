@@ -7,9 +7,10 @@ cd ~/iris/web
 npm install
 npm run dev
 ```
-Open http://localhost:5173/phone or /dashboard. Both use the same session ID (default judge-01).
-Change it to match the brain. Session is a routing identifier, not authentication.
-The frontend runs without the brain: turn on **Demo mode** for explicitly scripted examples.
+Open http://localhost:5173/phone or /dashboard. The phone starts the session (default judge-01);
+change it to match the brain. Session is a routing identifier, not authentication.
+The dashboard only watches: it shows whichever session the brain is running, and opening or reloading it never starts or restarts one.
+The phone runs without the brain: turn on **Demo mode** for explicitly scripted examples.
 Demo does not contact the backend or represent actual camera observations; precision is never fabricated.
 Use /garden only as a reserved integration route for Darren.
 
@@ -18,8 +19,9 @@ Vite proxies /api and the /api/ws WebSocket to http://127.0.0.1:8000.
 Copy .env.example to .env.local to override IRIS_API_TARGET.
 POST /api/ask and WebSocket messages follow ../docs/contracts.md.
 Ask requests time out after 25 seconds. WebSocket connections retry with bounded backoff.
-The feed is session-filtered and bounded to 200 events in the current tab. Pause freezes the view.
-Precision and median latency come from backend metrics events; absent metrics show a dash.
+The phone's feed is session-filtered and bounded to 200 events in the current tab.
+The dashboard (src/dashboard) loads the session so far from GET /api/trace, then follows the WebSocket; frames come from each decision's trace.frame_url.
+Gate accuracy and median latency come from backend metrics; absent metrics show a dash.
 If median latency is absent, the dashboard displays the most recent answer event's latency.
 The phone measures client end-to-end ask latency separately (not microphone transcription or playback).
 
@@ -51,7 +53,7 @@ npm run build
 npm run lint
 npm test
 ```
-Manual: demo on/off, silent filter, pause/resume, session change, ask timeout/error, live WebSocket,
+Manual: demo on/off, session change, dashboard reload mid-session, ask timeout/error, live WebSocket,
 mic denied, unsupported speech, wake word, screen wake lock, and physical-phone audio replay.
 Design uses placeholder typography and a muted green accent pending Shrirang's Figma.
 
@@ -64,7 +66,7 @@ AudioLevel measures microphone RMS locally only while listening, stops tracks af
 The 60fps target is not a measured iPhone guarantee. Verify on physical Safari with microphone permission, voice playback, thermal load, background/foreground transitions, and reduced motion. Browser tests verify shader compilation, context recovery, degraded quality, and state transitions; unit tests cover the frame budget and microphone cleanup.
 
 ## Figma phone design
-The phone screen implements node 3:413 (Iris visual assistant) from https://www.figma.com/design/CNuh6kIdUTLzYeQX8W3e1X/Untitled?node-id=3-413. Figma assets are local in public/figma, and Inter fonts are bundled locally. The existing audio-reactive WebGL iris replaces the reference's static artwork, per the shader requirement. Native iPhone bezel/status/home chrome is left to the actual device/browser. The dashboard has no finished counterpart in this Figma file and keeps its existing layout.
+The phone screen implements node 3:413 (Iris visual assistant) from https://www.figma.com/design/CNuh6kIdUTLzYeQX8W3e1X/Untitled?node-id=3-413. Figma assets are local in public/figma, and Inter fonts are bundled locally. The existing audio-reactive WebGL iris replaces the reference's static artwork, per the shader requirement. Native iPhone bezel/status/home chrome is left to the actual device/browser. The dashboard has no counterpart in this Figma file; it uses the phone page's typeface and colours.
 More options opens session, demo, and wake-word controls. Demo mode shows the Figma product/nutrition example with explicit sample labels. Live mode uses actual ask/decision data and leaves unavailable confidence, nutrition, and camera imagery unspecified. Product context expands on tap.
 
 ## Merged memory garden

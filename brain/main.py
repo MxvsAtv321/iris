@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import time
-from collections import defaultdict, deque
+from collections import OrderedDict, defaultdict, deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from itertools import count
@@ -49,6 +49,11 @@ gates = defaultdict(gate.Gate)
 latencies = deque(maxlen=50)   # (total_ms, first_word_ms)
 spoken = deque(maxlen=20)      # (ts, text) sent to TTS, for the echo filter
 frame = {"jpeg": b"", "ts": 0.0}
+frames = OrderedDict()         # frame_id -> JPEG the loop looked at, for the dashboard; the newest FRAMES_KEPT
+FRAMES_KEPT = 450              # about 15 minutes at one frame per tick
+BOOT = f"{int(time.time()):x}"  # in every frame URL: ids start again when the brain restarts, and browsers cache frames
+# What the dashboard loads when it opens: the running session's decisions and answers, and its counts.
+mind = {"sid": None, "events": deque(maxlen=1800), "tally": {"silent": 0, "display": 0, "speak": 0}}
 watch = {"ref": None, "box": None, "last_call": -1e9}
 frame_ids, ask_ids = count(1), count(1)
 background = set()
@@ -103,8 +108,20 @@ def now_iso():
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def keep(msg):
+    """Decisions and answers stay in memory, so a dashboard that opens or reloads mid-session sees all of it."""
+    if mind["sid"] != msg["session_id"]:
+        mind.update(sid=msg["session_id"], tally={"silent": 0, "display": 0, "speak": 0})
+        mind["events"].clear()
+    mind["events"].append(msg)
+    if msg["type"] == "decision":
+        mind["tally"][msg["level"]] += 1
+
+
 async def emit(kind, sid, **fields):
     msg = {"type": kind, "session_id": sid, "at": now_iso(), **fields}
+    if kind in ("decision", "answer"):
+        keep(msg)
     for ws in list(clients):
         try:
             await asyncio.wait_for(ws.send_json(msg), 1)
@@ -229,43 +246,78 @@ def change(a, b):
 
 # ---------- the watch loop ----------
 
-async def decision(sid, fid, level, reason, box, text="", speak=""):
+async def decision(sid, fid, level, reason, box, text="", speak="", trace=None):
     log.info("%s %s %r: %s", fid, level, text, reason)
-    await emit("decision", sid, level=level, text=text, speak=speak, reason=reason, frame_id=fid, focus_box=box)
+    await emit("decision", sid, level=level, text=text, speak=speak, reason=reason, frame_id=fid, focus_box=box,
+               trace={**BLANK_TRACE, **(trace or {}), "verdict": level})
 
 
-async def tick(sid, fid):
+# Every decision's trace has all of these keys; a frame the model never judged keeps the blanks.
+BLANK_TRACE = dict(frame_url=None, looked=False, skipped=None, change=None, saw="", why="", topic="", model=None,
+                   candidate={"text": "", "say": ""}, urgency=None, display_at=gate.DISPLAY_AT, speak_at=gate.SPEAK_AT,
+                   proposed="silent", rules=[], blocked_by=None, latency_ms={})
+
+
+async def tick(sid, fid, trace):
+    """One frame. `trace` is filled in as the frame moves through, so an error still reports how far it got."""
+    t0 = time.monotonic()
+    ms = lambda since: round((time.monotonic() - since) * 1000)  # noqa: E731
+    lat = trace["latency_ms"] = {}
+
+    def skip(why, reason):
+        lat["total"] = ms(t0)
+        trace["skipped"] = why
+        return decision(sid, fid, "silent", reason, watch["box"], trace=trace)
+
     jpeg = await capture()
+    lat["capture"] = ms(t0)
+    frames[fid] = jpeg
+    while len(frames) > FRAMES_KEPT:
+        frames.popitem(last=False)
+    trace["frame_url"] = f"/api/frame/{fid}?v={BOOT}"
     small = thumb(jpeg)
-    if watch["ref"] is not None and change(small, watch["ref"]) < CHANGE_THRESHOLD:
-        return await decision(sid, fid, "silent", "no change", watch["box"])
+    if watch["ref"] is not None:
+        diff = change(small, watch["ref"])
+        trace["change"] = {"score": round(diff, 1), "threshold": CHANGE_THRESHOLD}
+        if diff < CHANGE_THRESHOLD:
+            return await skip("no_change", "no change")
     if asking:
-        return await decision(sid, fid, "silent", "question in progress", watch["box"])
+        return await skip("question_in_progress", "question in progress")
     wait = LOOP_GAP_S - (time.monotonic() - watch["last_call"])
     if wait > 0:
-        return await decision(sid, fid, "silent", f"scene changed; next model call in {wait:.0f}s", watch["box"])
+        return await skip("model_spacing", f"scene changed; next model call in {wait:.0f}s")
     watch["last_call"], watch["ref"] = time.monotonic(), small
 
     s = session(sid)
+    trace["looked"] = True
+    t_model = time.monotonic()
     text, model = await llm.chat(llm.messages(prompts.WATCH, prompts.build_watch(s), jpeg),
                                  model=llm.WATCH, timeout=WATCH_TIMEOUT_S)
+    lat["model"] = ms(t_model)
+    trace["model"] = model
     w = llm.parse_json(text)
     if not isinstance(w, dict):
-        return await decision(sid, fid, "silent", "bad model output", None)
+        lat["total"] = ms(t0)
+        return await decision(sid, fid, "silent", "bad model output", None, trace=trace)
     box = watch["box"] = gate.to_focus_box(w.get("box_2d"))
-    level, reason = gates[sid].decide(w)
+    line, say = str(w.get("text") or "")[:40], str(w.get("say") or "")
+    t_gate = time.perf_counter()
+    level, reason, judged = gates[sid].explain(w)
+    lat["gate"] = round((time.perf_counter() - t_gate) * 1000, 3)
+    trace.update(judged, saw=str(w.get("description") or ""), why=str(w.get("reason") or "")[:100],
+                 topic=str(w.get("topic") or ""), candidate={"text": line, "say": say})
     if model != llm.WATCH:
         reason += f" [via {model}]"
     if w.get("description"):
         note(s["descriptions"], str(w["description"]))
         bg(remember(sid, jpeg, str(w["description"])))
-    line, say = str(w.get("text") or "")[:40], str(w.get("say") or "")
     if level != "silent":
         bg(show(line or say, eye="nudge"))
         note(s["said"], say or line)
     save_state()
+    lat["total"] = ms(t0)
     await decision(sid, fid, level, reason, box, text=line if level != "silent" else "",
-                   speak=say if level == "speak" else "")
+                   speak=say if level == "speak" else "", trace=trace)
 
 
 async def watch_loop():
@@ -275,13 +327,15 @@ async def watch_loop():
         if not sid:
             await asyncio.sleep(1)
             continue
-        t0, fid = time.monotonic(), f"f_{next(frame_ids):04d}"
+        t0, fid, trace = time.monotonic(), f"f_{next(frame_ids):04d}", {}
         try:
-            await tick(sid, fid)
+            await tick(sid, fid, trace)
             errors = 0
         except Exception as e:  # noqa: BLE001 - the loop never dies
             errors += 1
-            await decision(sid, fid, "silent", f"error: {type(e).__name__}: {e}"[:160], None)
+            trace.setdefault("latency_ms", {})["total"] = round((time.monotonic() - t0) * 1000)
+            await decision(sid, fid, "silent", f"error: {type(e).__name__}: {e}"[:160], None,
+                           trace={**trace, "skipped": "error"})
         await asyncio.sleep(max(0.0, (BACKOFF_S if errors >= 3 else TICK_S) - (time.monotonic() - t0)))
 
 
@@ -297,12 +351,19 @@ def metrics():
         bake = json.loads(BAKEOFF.read_text())
     except (OSError, ValueError):
         bake = {}
+    tally = mind["tally"] if mind["sid"] == state["active"] else {}
     return dict(
         answer_latency_ms_p50=pct([t for t, _ in latencies], 0.5),
         answer_latency_ms_p95=pct([t for t, _ in latencies], 0.95),
         first_word_ms_p50=pct([f for _, f in latencies], 0.5),
         gate_precision=bake.get("gate_precision"),
         gate_precision_basis=bake.get("basis"),  # "measured on N test photos" - label it that way
+        # share of test photos where the gate chose the expected level; same basis as the precision
+        gate_accuracy=((bake.get("models") or {}).get(bake.get("chosen")) or {}).get("level_agreement"),
+        moments_seen=sum(tally.values()),
+        moments_silent=tally.get("silent", 0),
+        moments_shown=tally.get("display", 0),
+        moments_spoken=tally.get("speak", 0),
         model_calls_today=llm.calls_today(),
         model_usd_today=llm.usd_today(),
         ask_model=llm.PRIMARY,
@@ -448,7 +509,7 @@ async def ask(q: AskIn):
     latencies.append((latency_ms, first_ms))
     g.hold(speak or display)
     note(s["said"], speak or display)
-    if display != FALLBACK:
+    if display != FALLBACK and mode != "recall":   # an answer about the past is not a new sighting of the thing
         bg(remember_ask(sid, shot, question, speak or display))
     save_state()
     log.info("ask %s mode=%s %s total=%dms sources=%s", ask_id, mode, timings, latency_ms, sources)
@@ -479,6 +540,32 @@ async def scene():
 
 class ShowIn(BaseModel):
     text: str
+
+
+@app.get("/api/frame")
+async def latest_frame():
+    """The newest camera frame the brain holds, from the loop or a question. 204 before the first one."""
+    if not frame["jpeg"]:
+        return Response(status_code=204)
+    return Response(frame["jpeg"], media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/frame/{frame_id}")
+async def one_frame(frame_id: str):
+    """The frame behind one decision (its `trace.frame_url`). 404 once it has aged out."""
+    jpeg = frames.get(frame_id)
+    if not jpeg:
+        return Response(status_code=404)
+    return Response(jpeg, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.get("/api/trace")
+async def trace_so_far():
+    """Everything the dashboard needs to open mid-session. Read-only: it never starts or touches a session.
+    After a session stops, its events stay here until the next one says something."""
+    sid = state["active"]
+    return {"session_id": sid, "events": list(mind["events"]) if sid in (None, mind["sid"]) else [],
+            "metrics": metrics()}
 
 
 @app.post("/api/show")

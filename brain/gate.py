@@ -13,6 +13,7 @@ REPEAT_WINDOW_S = 300                # how far back "already said" reaches
 REPEAT_SIM = 0.6                     # share of word pairs that makes a line a repeat
 SPEAK_GAP_S, DISPLAY_GAP_S = 15, 5   # rate limits
 QUIET_AFTER_ANSWER_S = 10            # keep the loop off the display after an /api/ask answer
+RULES = ("cooldown", "repeat", "quiet_after_answer", "rate_limit")   # the order they are checked in
 
 
 def words(s):
@@ -68,36 +69,78 @@ class Gate:
 
     def decide(self, w, now=None):
         """w: parsed watch output. Returns (level, reason)."""
+        return self.explain(w, now)[:2]
+
+    def explain(self, w, now=None):
+        """decide, plus the trace the dashboard shows: the urgency against its thresholds, and every
+        rule in the order it is checked. Returns (level, reason, trace).
+
+        A rule's outcome is "passed", "blocked", "softened" (spoken line shown instead) or
+        "not_checked" (urgency was under the display threshold, so there was nothing to hold back).
+        All four are worked out even after one blocks; `blocked_by` names the first, which is the
+        one that decided."""
         now = now or time.time()
+        rules = [{"rule": r, "outcome": "not_checked", "detail": ""} for r in RULES]
+        trace = {"urgency": None, "display_at": DISPLAY_AT, "speak_at": SPEAK_AT, "proposed": "silent",
+                 "rules": rules, "blocked_by": None}
         try:
             u = int(float(w.get("urgency", 0)))
         except (TypeError, ValueError, AttributeError):
-            return "silent", "bad model output"
+            return "silent", "bad model output", trace
         why = str(w.get("reason") or w.get("description") or "")[:100]
         reason = f"urgency {u}: {why}"
         level = "speak" if u >= SPEAK_AT else "display" if u >= DISPLAY_AT else "silent"
+        trace.update(urgency=u, proposed=level)
         if level == "silent":
-            return level, reason
+            return level, reason, trace
 
         topic = str(w.get("topic") or "")
         line = str(w.get("say") or w.get("text") or "")
-        if topic and now - self.topics.get(topic, -1e9) < TOPIC_COOLDOWN_S:
-            return "silent", f"cooldown on '{topic}'"
+        cooldown, repeat, quiet, rate = rules
+
+        since = now - self.topics.get(topic, -1e9)
+        if topic and since < TOPIC_COOLDOWN_S:
+            cooldown.update(outcome="blocked", detail=f"nudged about '{topic}' {since:.0f} s ago; one per {TOPIC_COOLDOWN_S} s")
+        else:
+            cooldown.update(outcome="passed", detail=f"no nudge about '{topic}' in the last {TOPIC_COOLDOWN_S} s")
+
         recent = [l for t, l in self.said if now - t < REPEAT_WINDOW_S]
         sim, match = max(((echo_score(line, [l]), l) for l in recent), default=(0.0, ""))
+        repeat.update(similarity=round(sim, 2), threshold=REPEAT_SIM)
         if sim >= REPEAT_SIM:
-            return "silent", f"repeat of '{match}' (sim {sim:.1f})"
-        if now - self.held_at < QUIET_AFTER_ANSWER_S:
-            return "silent", "quiet after answer"
-        if level == "speak" and now - self.last["speak"] < SPEAK_GAP_S:
+            repeat.update(outcome="blocked", detail=f"already said '{match}'")
+        else:
+            repeat.update(outcome="passed", detail=f"not said in the last {REPEAT_WINDOW_S // 60} minutes")
+
+        since = now - self.held_at
+        if since < QUIET_AFTER_ANSWER_S:
+            quiet.update(outcome="blocked", detail=f"the wearer spoke to Iris {since:.0f} s ago; quiet for {QUIET_AFTER_ANSWER_S} s")
+        else:
+            quiet.update(outcome="passed", detail=f"no question in the last {QUIET_AFTER_ANSWER_S} s")
+
+        softened = level == "speak" and now - self.last["speak"] < SPEAK_GAP_S
+        since = now - self.last["display"]
+        if (softened or level == "display") and since < DISPLAY_GAP_S:
+            rate.update(outcome="blocked", detail=f"showed a line {since:.0f} s ago; one per {DISPLAY_GAP_S} s")
+        elif softened:
+            rate.update(outcome="softened", detail=f"spoke {now - self.last['speak']:.0f} s ago; one spoken line per {SPEAK_GAP_S} s, so shown instead")
+        else:
+            rate.update(outcome="passed", detail=f"nothing {'spoken' if level == 'speak' else 'shown'} in the last "
+                                                 f"{SPEAK_GAP_S if level == 'speak' else DISPLAY_GAP_S} s")
+
+        trace["blocked_by"] = next((r["rule"] for r in rules if r["outcome"] == "blocked"), None)
+        if trace["blocked_by"]:
+            return "silent", {"cooldown": f"cooldown on '{topic}'",
+                              "repeat": f"repeat of '{match}' (sim {sim:.1f})",
+                              "quiet_after_answer": "quiet after answer",
+                              "rate_limit": "display rate limit"}[trace["blocked_by"]], trace
+        if softened:
             level, reason = "display", reason + " (speak rate limit)"
-        if level == "display" and now - self.last["display"] < DISPLAY_GAP_S:
-            return "silent", "display rate limit"
 
         self.topics[topic] = now
         self.last[level] = self.last["display"] = now
         self.said = (self.said + [(now, line)])[-20:]
-        return level, reason
+        return level, reason, trace
 
 
 if __name__ == "__main__":
@@ -119,4 +162,22 @@ if __name__ == "__main__":
     h = Gate()
     h.hold("12g protein per bar", now=t)
     assert h.decide({"urgency": 9, "topic": "x", "say": "Watch the stove, it is on"}, t + 3)[1] == "quiet after answer"
+
+    # The trace: every rule in order, and the first one that blocked.
+    g = Gate()
+    level, _, tr = g.explain(nudge, t)
+    assert level == "speak" and tr["blocked_by"] is None and tr["proposed"] == "speak"
+    assert [r["rule"] for r in tr["rules"]] == list(RULES) and {r["outcome"] for r in tr["rules"]} == {"passed"}
+    assert (tr["urgency"], tr["display_at"], tr["speak_at"]) == (9, DISPLAY_AT, SPEAK_AT)
+    level, _, tr = g.explain(reworded, t + 20)
+    outcome = {r["rule"]: r["outcome"] for r in tr["rules"]}
+    assert level == "silent" and tr["blocked_by"] == "repeat" and outcome["cooldown"] == "passed"
+    assert tr["rules"][1]["similarity"] >= REPEAT_SIM and tr["rules"][1]["threshold"] == REPEAT_SIM
+    level, reason, tr = g.explain({"urgency": 9, "topic": "stove", "say": "The stove is still on behind you"}, t + 8)
+    assert level == "display" and "speak rate limit" in reason and tr["rules"][3]["outcome"] == "softened"
+    level, reason, tr = g.explain({"urgency": 6, "topic": "price", "text": "Oat milk is two for five"}, t + 9)
+    assert (level, reason, tr["blocked_by"]) == ("silent", "display rate limit", "rate_limit")
+    level, _, tr = g.explain({"urgency": 2}, t)
+    assert level == "silent" and tr["blocked_by"] is None and {r["outcome"] for r in tr["rules"]} == {"not_checked"}
+    assert g.explain({"urgency": "high"}, t)[2]["urgency"] is None
     print("gate ok")
