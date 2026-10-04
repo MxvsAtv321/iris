@@ -14,6 +14,8 @@
 # Phones need https for the microphone, which is what the tunnel is for.
 #
 # Logs and pid files are in brain/.run/ (not committed). The Agentverse agents are separate: scripts/agents.sh.
+#
+# Windows: run it from Git Bash, not PowerShell. The brain's venv is found in brain/.venv/Scripts/ there.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RUN="$ROOT/brain/.run"
@@ -42,6 +44,14 @@ tunnel_dead() {
   [ -n "$gone" ] && [ "${gone:-0}" -gt "${back:-0}" ]
 }
 
+# The venv's uvicorn: .venv/bin on macOS and Linux, .venv/Scripts on Windows. Else whatever is on PATH.
+uvicorn_path() {
+  for p in "$ROOT/brain/.venv/bin/uvicorn" "$ROOT/brain/.venv/Scripts/uvicorn"; do
+    [ -x "$p" ] && { echo "$p"; return; }
+  done
+  echo uvicorn
+}
+
 set_env() {   # set_env KEY VALUE: replace the line in .env, or add it
   if grep -q "^$1=" "$ROOT/.env" 2>/dev/null; then
     sed -i.bak "s|^$1=.*|$1=$2|" "$ROOT/.env" && rm -f "$ROOT/.env.bak"
@@ -52,10 +62,11 @@ set_env() {   # set_env KEY VALUE: replace the line in .env, or add it
 
 start() {
   [ -f "$ROOT/.env" ] || { echo "no .env at the repo root: copy .env.example and fill it in"; exit 1; }
-  command -v cloudflared >/dev/null || { echo "cloudflared is not installed: brew install cloudflared"; exit 1; }
+  command -v cloudflared >/dev/null || {
+    echo "cloudflared is not installed: brew install cloudflared (macOS), winget install --id Cloudflare.cloudflared (Windows, then reopen Git Bash)"; exit 1; }
 
   if alive brain; then echo "brain already running (pid $(cat "$RUN/brain.pid"))"; else
-    PY="$ROOT/brain/.venv/bin/uvicorn"; [ -x "$PY" ] || PY=uvicorn
+    PY="$(uvicorn_path)"
     (cd "$ROOT/brain" || exit 1; nohup "$PY" main:app --host 127.0.0.1 --port $BRAIN_PORT > "$RUN/brain.log" 2>&1 < /dev/null & echo $! > "$RUN/brain.pid")
     echo "started the brain on port $BRAIN_PORT"
   fi
@@ -123,7 +134,7 @@ stop() {
 restart_brain() {
   if alive brain; then kill "$(cat "$RUN/brain.pid")" 2>/dev/null; sleep 2; fi
   rm -f "$RUN/brain.pid"
-  PY="$ROOT/brain/.venv/bin/uvicorn"; [ -x "$PY" ] || PY=uvicorn
+  PY="$(uvicorn_path)"
   (cd "$ROOT/brain" || exit 1; nohup "$PY" main:app --host 127.0.0.1 --port $BRAIN_PORT > "$RUN/brain.log" 2>&1 < /dev/null & echo $! > "$RUN/brain.pid")
   n=0; while [ "$(answers "http://127.0.0.1:$BRAIN_PORT/api/trace")" != "200" ] && [ $n -lt 20 ]; do sleep 1; n=$((n + 1)); done
   echo "brain restarted (pid $(cat "$RUN/brain.pid")); it answers: $(answers "http://127.0.0.1:$BRAIN_PORT/api/trace")"

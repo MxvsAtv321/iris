@@ -15,6 +15,22 @@ On the integration laptop, joined to the glasses' hotspot, with `.env` filled in
 
 The phone needs https for its microphone, which is what the tunnel is for. It is a Cloudflare quick tunnel: public, no account, and its address changes every time the tunnel starts, so `start` writes it to `TUNNEL_HOST` in `.env` and rebuilds the web app. Stop it after the demo.
 
+### On Windows
+
+Use **Git Bash**, not PowerShell: the `.sh` scripts and `source` only work there. Once, from the repo root:
+
+    winget install --id Cloudflare.cloudflared      # then close and reopen Git Bash
+    python -m venv brain/.venv
+    brain/.venv/Scripts/pip install -r brain/requirements.txt -r brain/memory/requirements.txt
+    (cd web && npm install)
+    cp .env.example .env                            # then fill in the keys
+
+Then each time, still in Git Bash at the repo root:
+
+    scripts/run_demo.sh start
+
+The scripts find the venv in `brain/.venv/Scripts/` themselves, so there is nothing to activate. Wherever this README says `brain/.venv/bin/python`, use `brain/.venv/Scripts/python` on Windows. Allow Python and Node through the firewall if Windows asks. If something doesn't start, `scripts/run_demo.sh status` says which part, and its log is in `brain/.run/`.
+
 ## Fetch.ai agents
 
 Three Iris agents are registered on Agentverse. Each speaks the Agent Chat Protocol, so ASI:One can find it and talk to it.

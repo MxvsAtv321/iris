@@ -4,7 +4,8 @@
 #
 #   scripts/agents.sh start | stop | status
 cd "$(dirname "$0")/../brain" || exit 1
-PY=.venv/bin/python
+PY=.venv/bin/python                      # macOS and Linux
+[ -x "$PY" ] || PY=.venv/Scripts/python  # Windows (Git Bash)
 [ -x "$PY" ] || PY=python3
 mkdir -p .agents
 case "${1:-status}" in
