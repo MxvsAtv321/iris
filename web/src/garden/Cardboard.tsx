@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { StereoEffect } from "three/examples/jsm/effects/StereoEffect.js";
 import * as THREE from "three";
-import type { Vec3 } from "./layout";
+import type { Vec3 } from "./tree/grow";
 import { getTheme } from "./theme";
 
 const DWELL_S = 1.4;
