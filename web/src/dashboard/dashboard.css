@@ -1,0 +1,174 @@
+/* The dashboard: one screen, read from a metre away. Brightness carries the hierarchy, and violet
+   means only two things: where Iris is looking, and when it said something. */
+@property --hx { syntax: '<percentage>'; inherits: true; initial-value: 50% }
+@property --hy { syntax: '<percentage>'; inherits: true; initial-value: 50% }
+@property --hw { syntax: '<percentage>'; inherits: true; initial-value: 30% }
+@property --hh { syntax: '<percentage>'; inherits: true; initial-value: 30% }
+
+.mind {
+  --ground: #101112;
+  --text: #eeeef0;
+  --muted: #a1a1a7;
+  --faint: #6d6d75;
+  --hair: rgba(255,255,255,.09);
+  --violet: #9a78ff;
+  --lilac: #c1b3dd;
+  --pad: clamp(20px, 3.2vw, 52px);
+  --frame-h: min(calc(100dvh - 338px), calc((100vw - 2 * var(--pad)) * .4));
+  height: 100dvh; min-height: 560px; overflow: hidden;
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto; row-gap: 26px;
+  padding: 24px var(--pad) 20px;
+  background: var(--ground); color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.mind q { quotes: '“' '”' }
+
+/* ---- top line ---- */
+.mind-top { display: flex; align-items: baseline; gap: 28px; min-height: 30px }
+.mind-top h1 { font-size: 20px; line-height: 26px; font-weight: 500; letter-spacing: -.7px }
+.mind-top h1 span { margin-left: 10px; font-size: 13px; font-weight: 400; letter-spacing: 0; color: var(--muted) }
+.mind-status { margin-left: auto; display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--muted) }
+.mind-status i { width: 6px; height: 6px; border-radius: 50%; border: 1px solid var(--faint) }
+.mind[data-state=live] .mind-status { color: var(--text) }
+.mind[data-state=live] .mind-status i { border-color: var(--text); background: var(--text); animation: mind-breathe 2.4s ease-in-out infinite alternate }
+.mind-top nav { display: flex; gap: 22px; font-size: 13px; color: var(--faint) }
+.mind-top nav a:hover { color: var(--text) }
+
+/* ---- frame and numbers on the left, thoughts on the right ---- */
+.mind-body { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: clamp(32px, 4.6vw, 76px); min-height: 0 }
+.mind-left { display: flex; flex-direction: column; gap: 30px; min-width: 0 }
+
+.mind-frame {
+  position: relative; margin: 0; overflow: hidden; border-radius: 5px;
+  height: var(--frame-h); width: calc(var(--frame-h) * var(--aspect, 1.3333));
+  background: #0a0a0c; box-shadow: 0 0 0 1px var(--hair);
+}
+.mind-frame img { display: block; width: 100%; height: 100%; object-fit: cover }
+/* Everything Iris is not looking at falls into shade; what it is looking at keeps the light. */
+.mind-shade {
+  position: absolute; inset: 0; background: rgba(9,9,12,.62); opacity: 0;
+  -webkit-mask-image: radial-gradient(ellipse calc(var(--hw) * 1.9) calc(var(--hh) * 1.9) at var(--hx) var(--hy), transparent 54%, #000 100%);
+  mask-image: radial-gradient(ellipse calc(var(--hw) * 1.9) calc(var(--hh) * 1.9) at var(--hx) var(--hy), transparent 54%, #000 100%);
+  transition: opacity .6s, --hx .8s cubic-bezier(.2,.7,.2,1), --hy .8s cubic-bezier(.2,.7,.2,1), --hw .8s cubic-bezier(.2,.7,.2,1), --hh .8s cubic-bezier(.2,.7,.2,1);
+}
+/* The ring is a fixed width in pixels, so a large box gets a fine line of light, not a thick band. */
+.mind-halo {
+  --ring: 30px;
+  position: absolute; opacity: 0; pointer-events: none;
+  left: calc(var(--hx) - var(--hw) - var(--ring)); top: calc(var(--hy) - var(--hh) - var(--ring));
+  width: calc(var(--hw) * 2 + var(--ring) * 2); height: calc(var(--hh) * 2 + var(--ring) * 2);
+  background: radial-gradient(closest-side, rgba(154,120,255,.05) 0, rgba(154,120,255,.06) calc(100% - 50px), rgba(154,120,255,.7) calc(100% - 30px), rgba(154,120,255,.18) calc(100% - 14px), transparent 100%);
+  filter: blur(6px);
+  transition: opacity .6s, --hx .8s cubic-bezier(.2,.7,.2,1), --hy .8s cubic-bezier(.2,.7,.2,1), --hw .8s cubic-bezier(.2,.7,.2,1), --hh .8s cubic-bezier(.2,.7,.2,1);
+}
+.mind-frame[data-looking=true] .mind-shade { opacity: 1 }
+.mind-frame[data-looking=stale] .mind-shade { opacity: .45 }
+.mind-frame[data-looking=stale] .mind-halo { opacity: calc(var(--glow, 1) * .35) }
+.mind-frame[data-looking=true] .mind-halo { opacity: calc(var(--glow, 1) * .8); animation: mind-glow 3.2s ease-in-out infinite alternate }
+.mind-frame[data-looking=true][data-level=speak] .mind-halo, .mind-frame[data-looking=true][data-level=display] .mind-halo { opacity: var(--glow, 1); filter: blur(7px) brightness(1.35) }
+.mind-frame figcaption {
+  position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-between; align-items: end; gap: 16px;
+  padding: 44px 16px 13px; font-size: 13px; color: #e4e4e8; background: linear-gradient(transparent, rgba(8,8,10,.72));
+}
+.mind-frame figcaption button { padding: 7px 13px; border-radius: 999px; font-size: 13px; color: var(--ground); background: var(--text) }
+.mind-empty, .mind-missing { font-size: 15px; line-height: 1.55; color: var(--muted) }
+.mind-empty { position: absolute; inset: 0; display: grid; place-content: center; padding: 0 16%; text-align: center }
+.mind-missing { position: absolute; left: 16px; top: 13px; right: 16px; font-size: 13px; color: #e4e4e8; text-shadow: 0 1px 6px #000 }
+
+.mind-numbers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; margin: 0; width: calc(var(--frame-h) * var(--aspect, 1.3333)) }
+.mind-numbers div { display: flex; flex-direction: column; gap: 9px }
+.mind-numbers dd { margin: 0; font-size: 42px; line-height: 1; font-weight: 300; letter-spacing: -1.2px; color: #dcdce0 }
+.mind-numbers small { font-size: 20px; letter-spacing: -.4px; color: var(--muted) }
+.mind-numbers dt { font-size: 12.5px; line-height: 1.5; color: var(--faint); max-width: 24ch }
+
+/* ---- thought stream ---- */
+.mind-stream {
+  min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 22px; max-width: 720px;
+  -webkit-mask-image: linear-gradient(#000 72%, transparent 99%); mask-image: linear-gradient(#000 72%, transparent 99%);
+}
+.mind-quiet { font-size: 17px; line-height: 1.55; color: var(--muted); max-width: 34ch }
+.mind-lull { flex-shrink: 0; padding-left: 112px; font-size: 14px; line-height: 1.5; color: var(--faint); opacity: calc(1 - var(--depth) * .1) }
+.mind-moment { flex-shrink: 0; opacity: max(.22, calc(.74 - var(--depth) * .1)) }
+.mind-moment[data-expanded=true], .mind-moment[data-held=true] { opacity: 1 }
+.mind-when { display: block; margin: 0 0 7px 112px; padding: 0; background: none; font-size: 12.5px; line-height: 1.4; color: var(--faint) }
+button.mind-when:hover, .mind-moment[data-held=true] .mind-when { color: var(--lilac) }
+.mind-moment dl { margin: 0; display: grid; gap: 7px }
+.mind-moment dl > div { display: grid; grid-template-columns: 96px minmax(0, 1fr); column-gap: 16px; align-items: baseline }
+.mind-moment dt { font-size: 13px; line-height: 1.5; color: var(--faint) }
+.mind-moment dd { margin: 0; font-size: 14.5px; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere }
+.mind-moment dd strong { font-weight: 500; color: var(--text) }
+.mind-moment q { display: block; margin-top: 3px; color: var(--lilac) }
+.mind-held { display: block; margin-top: 3px }
+.mind-held q { display: inline; color: var(--muted) }
+.mind-aside { color: var(--faint) }
+
+.mind-moment[data-expanded=true] dl { gap: 16px }
+.mind-moment[data-expanded=true] dl > div { animation: mind-rise .5s cubic-bezier(.2,.7,.2,1) both }
+.mind-moment[data-expanded=true] dl > div:nth-child(2) { animation-delay: .16s }
+.mind-moment[data-expanded=true] dl > div:nth-child(3) { animation-delay: .32s }
+.mind-moment[data-expanded=true] dt { font-size: 14px; line-height: 1.9; color: var(--muted) }
+.mind-moment[data-expanded=true] dd { font-size: 19px; line-height: 1.42; letter-spacing: -.2px; color: var(--text) }
+.mind-moment[data-expanded=true] dl > div:nth-child(2) dd { font-size: 17px; line-height: 1.5; color: #cfcfd4 }
+.mind-moment[data-expanded=true] .mind-decided { color: #cfcfd4 }
+.mind-moment[data-expanded=true] q { margin-top: 6px; text-shadow: 0 0 22px rgba(154,120,255,.55) }
+.mind-moment[data-expanded=true] .mind-held { margin-top: 6px; font-size: 16px; color: var(--muted) }
+.mind-moment[data-expanded=true] .mind-held q { text-shadow: none }
+.mind-latency { display: block; margin-top: 9px; font-size: 12.5px; line-height: 1.5; letter-spacing: 0; color: var(--faint) }
+
+/* urgency: a line from 0 to 10, the two thresholds, and a point of light where this moment landed */
+.mind-urgency { position: relative; display: block; height: 38px; margin: 34px 14px 0 5px; max-width: 380px }
+.mind-urgency::before { content: ''; position: absolute; left: -5px; right: -14px; top: 6px; height: 1px; background: rgba(255,255,255,.16) }
+.mind-urgency i { position: absolute; top: 1px; width: 1px; height: 11px; background: rgba(255,255,255,.38) }
+.mind-urgency em { position: absolute; top: 17px; left: 0; transform: translateX(-50%); white-space: nowrap; font-style: normal; font-size: 11.5px; line-height: 1.3; letter-spacing: 0; color: var(--faint) }
+.mind-urgency b { position: absolute; top: 2px; width: 9px; height: 9px; margin-left: -4.5px; border-radius: 50%; background: #c9c9cf }
+.mind-urgency b em { top: -24px; left: 50%; font-size: 13px; font-weight: 500; color: var(--text) }
+.mind-urgency[data-lit=true] b { background: var(--violet); box-shadow: 0 0 14px 3px rgba(154,120,255,.7) }
+.mind-urgency[data-lit=true] b em { color: var(--lilac) }
+
+.mind-rules { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 3px; font-size: 13px; line-height: 1.5; letter-spacing: 0 }
+.mind-rules li { display: grid; grid-template-columns: 150px minmax(0, 1fr); column-gap: 10px; color: var(--faint) }
+.mind-rules li[data-outcome=passed] span:first-child { color: var(--muted) }
+.mind-rules li[data-outcome=blocked], .mind-rules li[data-outcome=softened] { color: var(--text) }
+.mind-rules li[data-outcome=blocked] ~ li { color: var(--faint) }
+
+/* ---- timeline ---- */
+.mind-timeline { display: block; min-width: 0; padding: 0; border: 0 }
+.mind-timeline svg { display: block; width: 100%; height: 40px; overflow: visible; cursor: pointer }
+.tl-base { stroke: rgba(255,255,255,.06); stroke-width: 1 }
+.tl-tick { stroke: rgba(255,255,255,.2); stroke-width: 1 }
+.tl-looked { stroke: rgba(255,255,255,.62); stroke-width: 1.25 }
+.tl-held { fill: var(--ground); stroke: var(--lilac); stroke-width: 1.25; opacity: .85 }
+.tl-display { fill: var(--lilac); filter: drop-shadow(0 0 5px rgba(154,120,255,.8)) }
+.tl-speak, .tl-answer { fill: var(--violet); filter: drop-shadow(0 0 5px rgba(154,120,255,.95)) drop-shadow(0 0 14px rgba(154,120,255,.7)) }
+.tl-answer { fill: #d9ceff }
+.tl-pin { stroke: var(--lilac); stroke-width: 1; opacity: .7 }
+.mind-timeline p { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-top: 9px; font-size: 12px; line-height: 1.4; color: var(--faint) }
+.tl-legend { display: flex; align-items: center; flex-wrap: wrap; justify-content: center; gap: 4px 0 }
+.tl-legend i { display: inline-block; margin: 0 7px 0 20px; vertical-align: middle }
+.tl-legend i:first-child { margin-left: 0 }
+.k-tick { width: 1px; height: 8px; background: rgba(255,255,255,.3) }
+.k-looked { width: 1px; height: 15px; background: rgba(255,255,255,.7) }
+.k-held { width: 7px; height: 7px; border-radius: 50%; border: 1.25px solid var(--lilac) }
+.k-display { width: 7px; height: 7px; border-radius: 50%; background: var(--lilac) }
+.k-answer { width: 10px; height: 10px; border-radius: 50%; background: #d9ceff; box-shadow: 0 0 9px 1px rgba(154,120,255,.9) }
+.k-speak { width: 10px; height: 10px; border-radius: 50%; background: var(--violet); box-shadow: 0 0 9px 1px rgba(154,120,255,.9) }
+
+@keyframes mind-rise { from { opacity: 0; transform: translateY(7px) } }
+@keyframes mind-breathe { from { opacity: .55 } }
+@keyframes mind-glow { from { opacity: calc(var(--glow, 1) * .5) } }
+
+/* ---- small screens: one column that scrolls ---- */
+@media (max-width: 900px) {
+  .mind { --frame-h: calc((100vw - 2 * var(--pad)) * .75); height: auto; min-height: 100dvh; overflow: visible; row-gap: 28px }
+  .mind-top { flex-wrap: wrap; gap: 6px 20px }
+  .mind-body { grid-template-columns: minmax(0, 1fr); row-gap: 36px }
+  .mind-frame, .mind-numbers { width: 100% }
+  .mind-frame { height: auto; aspect-ratio: var(--aspect, 1.3333) }
+  .mind-numbers { gap: 16px }
+  .mind-numbers dd { font-size: 32px }
+  .mind-stream { max-height: 150vh; -webkit-mask-image: none; mask-image: none }
+  .mind-lull, .mind-when { padding-left: 0; margin-left: 0 }
+  .mind-moment dl > div { grid-template-columns: minmax(0, 1fr); row-gap: 2px }
+  .mind-rules li { grid-template-columns: minmax(0, 1fr) }
+  .tl-legend { display: none }
+}
