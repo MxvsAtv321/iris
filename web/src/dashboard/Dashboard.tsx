@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
-import { aheadLine, askLine, jevLine, keyOf, lullLine, ms, RULE_LABEL, thoughts, verdict, type AnswerEvent, type Decision, type Metrics, type MindEvent, type Tally, type Thought } from './mind'
+import { aheadLine, askLine, jevLine, keyOf, liveCaption, lullLine, ms, RULE_LABEL, thoughts, verdict, type AnswerEvent, type Decision, type Metrics, type MindEvent, type Tally, type Thought } from './mind'
 import { useMind } from './useMind'
 import './dashboard.css'
 
@@ -50,7 +50,7 @@ export function Dashboard() {
 
     <div className="mind-body">
       <div className="mind-left">
-        <Frame decision={shown} held={!!held} lingering={!!lingering} state={state} onLive={() => setPinned(null)} />
+        <Frame decision={shown} held={!!held} lingering={!!lingering} state={state} onLive={() => setPinned(null)} metrics={mind.metrics} />
         <Numbers metrics={mind.metrics} tally={mind.tally} events={mind.events} />
       </div>
       <section className="mind-stream" aria-label="Thought stream">
@@ -98,8 +98,18 @@ function haloOf([x, y, w, h]: [number, number, number, number]): Record<string, 
   }
 }
 
-function Frame({ decision, held, lingering, state, onLive }: { decision?: Decision; held: boolean; lingering: boolean; state: string; onLive: () => void }) {
+function Frame({ decision, held, lingering, state, onLive, metrics }: { decision?: Decision; held: boolean; lingering: boolean; state: string; onLive: () => void; metrics: Metrics | null }) {
   const trace = decision?.trace
+  // Live video is what the glasses see right now. A moment being looked back at, or one Iris has just spoken about,
+  // is the still frame Iris judged. The halo always comes from the last judged frame, and dims once the scene moves on.
+  const [videoFailed, setVideoFailed] = useState(false)
+  const video = state === 'live' && !held && !lingering && !videoFailed
+  const videoUrl = video ? '/api/stream' : null
+  useEffect(() => {
+    if (!videoFailed) return
+    const retry = setTimeout(() => setVideoFailed(false), 5000)
+    return () => clearTimeout(retry)
+  }, [videoFailed])
   // A frame the brain couldn't capture has no picture of its own; the latest one it holds stands in.
   const { loaded, missing } = useLoaded(trace ? trace.frame_url ?? (held ? null : '/api/frame?at=' + decision.frame_id) : null)
   // The box belongs to the frame Iris last judged. Once the scene has moved on it is only where Iris last looked, so it dims.
@@ -111,11 +121,12 @@ function Frame({ decision, held, lingering, state, onLive }: { decision?: Decisi
     : state === 'idle' ? 'No session is running. Start one from the phone. This screen only watches.'
     : 'Waiting for the first frame.'
   return <figure className="mind-frame" data-level={decision?.level} data-looking={looking} style={{ '--aspect': loaded?.aspect ?? 4 / 3, ...halo } as CSSProperties}>
-    {loaded ? <img src={loaded.url} alt={trace?.saw || 'What the glasses see'} /> : <p className="mind-empty">{empty}</p>}
-    {loaded && <><div className="mind-shade" /><div className="mind-halo" /></>}
-    {loaded && missing && <p className="mind-missing">That frame is no longer kept. This is the nearest one still loaded.</p>}
-    {decision && loaded && <figcaption>
-      <span>{held ? `Looking back at ${clock(decision.at)}` : lingering ? `${decision.level === 'speak' ? 'Spoke' : 'Showed a line'} about this, ${clock(decision.at)}` : state === 'live' ? `Seeing now, ${clock(decision.at)}` : `Last frame, ${clock(decision.at)}`}</span>
+    {videoUrl ? <img className="mind-video" src={videoUrl} alt="Live video of what the glasses see" onError={() => setVideoFailed(true)} />
+      : loaded ? <img src={loaded.url} alt={trace?.saw || 'What the glasses see'} /> : <p className="mind-empty">{empty}</p>}
+    {(videoUrl || loaded) && <><div className="mind-shade" /><div className="mind-halo" /></>}
+    {!videoUrl && loaded && missing && <p className="mind-missing">That frame is no longer kept. This is the nearest one still loaded.</p>}
+    {decision && (videoUrl || loaded) && <figcaption>
+      <span>{held ? `Looking back at ${clock(decision.at)}` : lingering ? `${decision.level === 'speak' ? 'Spoke' : 'Showed a line'} about this, ${clock(decision.at)}` : videoUrl ? liveCaption(metrics) : state === 'live' ? `Seeing now, ${clock(decision.at)}` : `Last frame, ${clock(decision.at)}`}</span>
       {held && <button onClick={onLive}>Back to now</button>}
     </figcaption>}
   </figure>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { IrisEvent } from '../api'
-import { aheadLine, askLine, EMPTY, jevLine, lullLine, parseSnapshot, reduce, thoughts, verdict, type AnswerEvent, type Decision, type Lull, type Trace } from './mind'
+import { aheadLine, askLine, EMPTY, jevLine, liveCaption, lullLine, parseSnapshot, reduce, thoughts, verdict, type AnswerEvent, type Decision, type Lull, type Trace } from './mind'
 
 const at = (s: number) => new Date(Date.UTC(2026, 9, 4, 0, 0, s)).toISOString()
 function decision(n: number, level: 'silent' | 'display' | 'speak', trace: Partial<Trace> = {}, session = 'judge-01') {
@@ -105,5 +105,14 @@ describe('thinking ahead', () => {
       decision(2, 'speak', { ...looked, ahead: { item: 'keys', place: 'desk', seen: 'keys on a desk', at: '' } }), decision(3, 'silent', looked)])
     expect(mind.events.map(e => aheadLine((e as Decision).trace))).toEqual([
       'Thinking ahead: the phone was last seen on the table, at 19:02.', 'Thinking ahead: the keys were last seen on the desk.', ''])
+  })
+})
+
+describe('the live picture’s caption', () => {
+  it('gives the frame rate while the stream runs and says so when it is down', () => {
+    expect(liveCaption({ camera_source: 'stream', camera_fps: 11.7 })).toBe('Live, 12 frames a second')
+    expect(liveCaption({ camera_source: 'stream', camera_fps: 0 })).toBe('Live')
+    expect(liveCaption({ camera_source: 'capture', camera_fps: 0 })).toBe('Live, one frame every 2 s. The camera’s video stream is down.')
+    expect(liveCaption(null)).toBe('Live')                    // a brain from before live video
   })
 })

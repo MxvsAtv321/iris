@@ -18,6 +18,7 @@ from PIL import Image
 from pydantic import BaseModel
 
 import ahead
+import camera
 import gate
 import jev
 import live
@@ -46,7 +47,7 @@ WATCH_TIMEOUT_S = 12           # per model; the loop can wait, a reasoning watch
 FALLBACK = "Didn't catch that, try again"
 NO_PHOTO = "\n(The camera didn't respond, so there is no photo. If the question needs one, say you can't see right now.)"
 HERE = Path(__file__).resolve().parent
-STATE = HERE / "state.json"
+STATE = Path(os.getenv("IRIS_STATE") or HERE / "state.json")   # a second brain on this laptop (tests) must not share the first one's
 BAKEOFF = HERE / "bakeoff" / "results.json"
 
 http = llm.http
@@ -54,7 +55,7 @@ clients = set()
 gates = defaultdict(gate.Gate)
 latencies = deque(maxlen=50)   # (total_ms, first_word_ms)
 spoken = deque(maxlen=20)      # (ts, text) sent to TTS, for the echo filter
-frame = {"jpeg": b"", "ts": 0.0}
+frame = camera.frame            # the newest frame from the camera's stream or /capture, already upright
 frames = OrderedDict()         # frame_id -> JPEG the loop looked at, for the dashboard; the newest FRAMES_KEPT
 FRAMES_KEPT = 450              # about 15 minutes at one frame per tick
 BOOT = f"{int(time.time()):x}"  # in every frame URL: ids start again when the brain restarts, and browsers cache frames
@@ -147,13 +148,14 @@ camera_lock = asyncio.Lock()   # the ESP32 serves one request at a time
 async def capture(reuse_s=0.0):
     """One frame from the camera. With reuse_s, a frame someone else took that recently is returned instead:
     the camera serves one request at a time, so a second capture right behind the first is wasted time."""
+    if camera.live():              # the stream is delivering: its newest frame, and nothing asked of the camera
+        return frame["jpeg"]
     async with camera_lock:
         if reuse_s and frame["jpeg"] and time.time() - frame["ts"] < reuse_s:
             return frame["jpeg"]
         r = await http.get(CAMERA + "/capture", timeout=1.5)
-    r.raise_for_status()
-    frame["jpeg"], frame["ts"] = r.content, time.time()
-    return r.content
+        r.raise_for_status()
+        return await camera.publish(r.content)
 
 
 async def setup_camera():
@@ -451,6 +453,8 @@ def metrics():
         model_usd_today=llm.usd_today(),
         ask_model=llm.PRIMARY,
         watch_model=llm.WATCH,
+        camera_source="stream" if camera.live() else "capture",   # live video, or single frames while the stream is down
+        camera_fps=camera.fps(),
     )
 
 
@@ -481,7 +485,8 @@ async def keep_warm_loop():
 
 @asynccontextmanager
 async def lifespan(app):
-    tasks = [asyncio.create_task(watch_loop()), asyncio.create_task(metrics_loop())]
+    tasks = [asyncio.create_task(watch_loop()), asyncio.create_task(metrics_loop()),
+             asyncio.create_task(camera.read_stream(http))]
     if KEEP_WARM_S:
         tasks.append(asyncio.create_task(keep_warm_loop()))
     else:
@@ -731,6 +736,18 @@ async def latest_frame():
     if not frame["jpeg"]:
         return Response(status_code=204)
     return Response(frame["jpeg"], media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/stream")
+async def live_video():
+    """What the glasses see, as live video (MJPEG) for the dashboard. The brain is the camera's only viewer and passes
+    its frames on, so any number of dashboards can watch. While the camera's stream is down this still works, at the
+    pace of the watch loop's single frames."""
+    async def parts():
+        async for jpeg in camera.frames_for_a_viewer():
+            yield camera.multipart(jpeg)
+    return StreamingResponse(parts(), media_type="multipart/x-mixed-replace; boundary=frame",
+                             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
 
 @app.get("/api/frame/{frame_id}")
