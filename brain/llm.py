@@ -142,12 +142,21 @@ async def stream(model, msgs, max_tokens=1500):
                            timeout=httpx.Timeout(20, connect=3)) as r:
         if r.status_code >= 400:
             raise RuntimeError(f"{model} HTTP {r.status_code}: {(await r.aread())[:200]!r}")
-        async for line in r.aiter_lines():
-            if not line.startswith("data:"):
+        lines, finished = r.aiter_lines().__aiter__(), False
+        while True:
+            # After "[DONE]" the reply is over, but the body has a few bytes left. Reading them to the end is what
+            # lets the connection go back to the pool; leaving early made every call open a new one (a TCP and TLS
+            # handshake, about 0.4 s on the hotspot). Half a second is allowed for it, then the call ends anyway.
+            try:
+                line = await (asyncio.wait_for(lines.__anext__(), 0.5) if finished else lines.__anext__())
+            except (StopAsyncIteration, asyncio.TimeoutError):
+                break
+            if finished or not line.startswith("data:"):
                 continue
             data = line[5:].strip()
             if data == "[DONE]":
-                break
+                finished = True
+                continue
             try:
                 chunk = json.loads(data)
             except ValueError:
@@ -162,12 +171,20 @@ async def stream(model, msgs, max_tokens=1500):
                 yield delta
 
 
-async def chat(msgs, model=None, timeout=6.0):
-    """Whole reply, model (default PRIMARY) first, backup on any failure. -> (text, model used)"""
+async def chat(msgs, model=None, timeout=6.0, late=None):
+    """Whole reply, model (default PRIMARY) first, backup on any failure. -> (text, model used)
+
+    late: (another model, seconds). If the first model has not started writing by then, the other is asked the same
+    thing and whichever starts first is used. For a model that is usually quick but now and then leaves a request
+    waiting many seconds, this caps the wait at about `seconds` plus the other model's usual time."""
     last = None
     for m in dict.fromkeys([model or PRIMARY, BACKUP]):
         try:
             async with asyncio.timeout(timeout):
+                if late and late[0] and late[0] != m:
+                    who = {}
+                    text = "".join([c async for c in hedged_stream(msgs, model=m, hedge_s=late[1], backup=late[0], who=who)])
+                    return text, who.get("model", m)
                 return "".join([c async for c in stream(m, msgs)]), m
         except Exception as e:  # noqa: BLE001 - any failure means "try the backup"
             last = e
@@ -175,16 +192,18 @@ async def chat(msgs, model=None, timeout=6.0):
     raise RuntimeError(f"all models failed: {last}")
 
 
-async def hedged_stream(msgs, model=None, hedge_s=HEDGE_S):
+async def hedged_stream(msgs, model=None, hedge_s=HEDGE_S, backup=None, who=None):
     """Stream from model (default PRIMARY). If it has no first chunk within hedge_s, or fails,
-    race the backup and keep whichever produces a chunk first; the other is cancelled."""
+    race the backup (default BACKUP) and keep whichever produces a chunk first; the other is cancelled.
+    who: a dict that is given the name of the model that answered, under "model"."""
     model = model or PRIMARY
+    second = backup or BACKUP
     gens = [stream(model, msgs)]
     tasks = {asyncio.create_task(anext(gens[0])): 0}
     done, _ = await asyncio.wait(tasks, timeout=hedge_s)
-    if model != BACKUP and not (done and next(iter(done)).exception() is None):
-        log.info("hedge: starting %s", BACKUP)
-        gens.append(stream(BACKUP, msgs))
+    if model != second and not (done and next(iter(done)).exception() is None):
+        log.info("hedge: starting %s", second)
+        gens.append(stream(second, msgs))
         tasks[asyncio.create_task(anext(gens[1]))] = 1
 
     winner, first, pending, errors = None, "", set(tasks), []
@@ -203,8 +222,10 @@ async def hedged_stream(msgs, model=None, hedge_s=HEDGE_S):
             await g.aclose()
     if winner is None:
         raise RuntimeError(f"all models failed: {errors}")
+    if who is not None:
+        who["model"] = second if winner == 1 else model
     if winner == 1:
-        log.info("hedge: backup won (primary slow or failed)")
+        log.info("hedge: %s answered first (%s was slow or failed)", second, model)
     try:
         yield first
         async for chunk in gens[winner]:
@@ -240,6 +261,12 @@ if __name__ == "__main__":
     assert asyncio.run(run("p:slow")) == "b:fast done"
     assert asyncio.run(run("p:fail")) == "b:fast done"
     assert asyncio.run(chat([], model="p:fail")) == ("b:fast done", "b:fast")
+    # A second model for when the first is late: it answers, and the caller is told who did.
+    assert asyncio.run(chat([], model="p:slow", late=("o:other", 0.1))) == ("o:other done", "o:other")
+    assert asyncio.run(chat([], model="p:fast", late=("o:other", 0.1))) == ("p:fast done", "p:fast")   # on time: only the first is asked
+    assert asyncio.run(chat([], model="p:fail", late=("o:other", 0.1))) == ("o:other done", "o:other")
+    assert asyncio.run(chat([], model="p:fast", late=("p:fast", 0.1))) == ("p:fast done", "p:fast")    # the same model twice is no second opinion
+    assert asyncio.run(chat([], model="p:slow", late=("", 0.1))) == ("p:slow done", "p:slow")          # not configured: as before
     assert parse_json('sure! {"urgency": 3} ok') == {"urgency": 3} and parse_json("nope") is None
     assert parse("xai:grok-4.7@low") == ("xai", "grok-4.7", "low")
     assert parse("openrouter:google/gemini-3.5-flash-lite") == ("openrouter", "google/gemini-3.5-flash-lite", "")
