@@ -35,10 +35,11 @@ answers() {
 # with a new address, fixes that.
 tunnel_dead() {
   [ -n "$(host)" ] || return 1
-  [ "$(answers "http://127.0.0.1:$WEB_PORT/phone")" = "200" ] || return 1     # the web app is down: not the tunnel's fault
-  [ "$(answers "https://$(host)/phone" 6)" = "200" ] && return 1
-  sleep 3
-  [ "$(answers "https://$(host)/phone" 6)" != "200" ]
+  # A short drop heals by itself and the address stays the same; cloudflared's log says which it is. The tunnel is
+  # gone for good only when "Tunnel not found" is the newer of the two messages.
+  gone="$(grep -n 'Tunnel not found' "$RUN/tunnel.log" 2>/dev/null | tail -1 | cut -d: -f1)"
+  back="$(grep -n 'Registered tunnel connection' "$RUN/tunnel.log" 2>/dev/null | tail -1 | cut -d: -f1)"
+  [ -n "$gone" ] && [ "${gone:-0}" -gt "${back:-0}" ]
 }
 
 set_env() {   # set_env KEY VALUE: replace the line in .env, or add it
@@ -95,6 +96,8 @@ status() {
     echo "brain through the tunnel:   $(answers "https://$HOST/api/trace" 6)"
     if tunnel_dead; then
       echo "THE LINK IS DEAD: the tunnel did not survive a network change. Run: scripts/run_demo.sh start (the link will be a new one)"
+    elif [ "$(answers "https://$HOST/phone" 6)" != "200" ]; then
+      echo "the link is not answering right now; the tunnel reconnects by itself after a short drop, so check again in a few seconds"
     fi
     link
   else
