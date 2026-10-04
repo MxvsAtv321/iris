@@ -5,6 +5,21 @@
 // and the app carries on with the no-login session. Nothing here throws to its caller except signIn,
 // which the sign-in form reports.
 
+// Sign-in is OFF unless it is switched on, so a demo has no login step at all. Two switches:
+//   VITE_JUDGE_SIGN_IN=1 in the root .env   on for everyone (restart the web server)
+//   /phone?signin=1                         on for this phone from now on, without a restart (?signin=0 turns it off)
+// While it is off nothing here makes a request, and the app uses the no-login session.
+const SWITCH = 'iris-sign-in'
+export function signInEnabled(): boolean {
+  try {
+    const asked = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('signin')
+    if (asked === '1') localStorage.setItem(SWITCH, '1')
+    if (asked === '0') localStorage.removeItem(SWITCH)
+    if (localStorage.getItem(SWITCH) === '1') return true
+  } catch { /* no storage: only the build-time switch counts */ }
+  return import.meta.env.VITE_JUDGE_SIGN_IN === '1'
+}
+
 const AUTH = '/auth'            // this site's own address; the web server passes it on to Neon Auth
 const TIMEOUT_MS = 4000
 const KEY = 'iris-judge'
@@ -26,8 +41,9 @@ async function call(path: string, body?: unknown): Promise<Response> {
   })
 }
 
-/** Whether sign-in can be offered at all. False when it isn't configured or the service doesn't answer. */
+/** Whether sign-in can be offered at all. False when it is switched off, isn't configured, or the service doesn't answer. */
 export async function signInAvailable(): Promise<boolean> {
+  if (!signInEnabled()) return false
   try { return (await call('/ok')).ok } catch { return false }
 }
 
@@ -77,7 +93,7 @@ let refreshing: Promise<string | null> | null = null
  *  other session reads it the no-login way. Tokens last 15 minutes and are renewed a minute early. */
 export async function tokenFor(sessionId: string): Promise<string | null> {
   const judge = savedJudge()
-  if (!judge || judge.id !== sessionId) return null
+  if (!judge || judge.id !== sessionId || !signInEnabled()) return null
   if (token && token.session === sessionId && token.expires - Date.now() > 60_000) return token.value
   refreshing ??= (async () => {
     try {

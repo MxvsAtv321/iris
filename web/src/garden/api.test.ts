@@ -8,7 +8,7 @@ afterEach(() => { vi.unstubAllGlobals(); forgetToken() })
 describe('the garden’s requests to memory', () => {
   function setup(judgeId: string | null, memory: (auth: string | null) => number) {
     const judge = judgeId && JSON.stringify({ id: judgeId, name: 'Maya', email: 'm@example.com', password: 'p' })
-    vi.stubGlobal('localStorage', { getItem: () => judge, setItem: () => {}, removeItem: () => {} })
+    vi.stubGlobal('localStorage', { getItem: (key: string) => key === 'iris-sign-in' ? '1' : judge, setItem: () => {}, removeItem: () => {} })
     const seen: (string | null)[] = []
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url === '/auth/token') return { ok: true, status: 200, json: async () => ({ token: jwt('user-1') }) }

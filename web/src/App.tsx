@@ -2,7 +2,7 @@ import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from 'rea
 import { SafeBoundary } from './garden/SafeBoundary'
 const Garden = lazy(() => import('./garden/Garden').then(module => ({ default: module.Garden })))
 import { ask, startSession, stripWakeWord, wakeEye, type Answer, type AskMarks } from './api'
-import { savedJudge, signIn, signInAvailable, signOut, type Judge } from './judge'
+import { savedJudge, signIn, signInAvailable, signInEnabled, signOut, type Judge } from './judge'
 import { useFeed } from './useFeed'
 import { Dashboard } from './dashboard/Dashboard'
 import { speechRecognition, type Recognition } from './voice'
@@ -61,7 +61,7 @@ export default function App() {
     finally { setSigningIn(false) }
   }
   function judgeSignOut() { signOut(); setJudge(null); setJudgeNote(''); switchSession('judge-01') }
-  const signedIn = judge !== null && judge.id === session
+  const signedIn = signInEnabled() && judge !== null && judge.id === session
   const sessionControls = <div className="session-bar"><form onSubmit={e => { e.preventDefault(); changeSession() }}><label htmlFor="session">SESSION</label><input id="session" value={draft} maxLength={80} onChange={e => setDraft(e.target.value)} /><button disabled={!draft.trim() || draft.trim() === session}>Apply</button></form>
       {(canSignIn || signedIn) && <form className="judge-bar" onSubmit={e => { e.preventDefault(); void judgeSignIn() }}>
         <label htmlFor="judge">YOUR NAME</label>

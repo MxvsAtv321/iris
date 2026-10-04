@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { forgetToken, savedJudge, signIn, signInAvailable, signOut, tokenFor } from './judge'
+import { forgetToken, savedJudge, signIn, signInAvailable, signInEnabled, signOut, tokenFor } from './judge'
 
 const jwt = (sub: string, secondsLeft = 900) => 'h.' + btoa(JSON.stringify({ sub, exp: Math.floor(Date.now() / 1000) + secondsLeft })).replace(/=+$/, '') + '.s'
 const reply = (status: number, body: unknown = {}) => ({ ok: status < 400, status, json: async () => body })
@@ -14,7 +14,7 @@ function auth(handler: (call: Call) => ReturnType<typeof reply>) {
   return calls
 }
 beforeEach(() => {
-  const store = new Map<string, string>()
+  const store = new Map<string, string>([['iris-sign-in', '1']])   // sign-in is switched on for these tests
   vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) })
   forgetToken()
 })
@@ -52,6 +52,28 @@ describe('judge sign-in', () => {
     auth(() => reply(422, { message: 'no' }))
     await expect(signIn('Maya')).rejects.toThrow('Sign-in isn’t available')
     expect(savedJudge()).toBeNull()
+  })
+})
+
+describe('sign-in is off unless switched on', () => {
+  it('makes no request and offers nothing while it is off', async () => {
+    localStorage.removeItem('iris-sign-in')
+    const fetcher = vi.fn()
+    vi.stubGlobal('fetch', fetcher)
+    expect(signInEnabled()).toBe(false)
+    expect(await signInAvailable()).toBe(false)
+    localStorage.setItem('iris-judge', JSON.stringify({ id: 'user-1', name: 'Maya', email: 'm@example.com', password: 'p' }))
+    expect(await tokenFor('user-1')).toBeNull()             // a judge saved earlier sends no token either
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+  it('is switched on for a phone by ?signin=1 and off again by ?signin=0', () => {
+    localStorage.removeItem('iris-sign-in')
+    vi.stubGlobal('location', { search: '?signin=1' })
+    expect(signInEnabled()).toBe(true)
+    vi.stubGlobal('location', { search: '' })
+    expect(signInEnabled()).toBe(true)                      // remembered on this phone
+    vi.stubGlobal('location', { search: '?signin=0' })
+    expect(signInEnabled()).toBe(false)
   })
 })
 
