@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from 'rea
 import { SafeBoundary } from './garden/SafeBoundary'
 const Garden = lazy(() => import('./garden/Garden').then(module => ({ default: module.Garden })))
 import { ask, startSession, stripWakeWord, wakeEye, type Answer, type AskMarks } from './api'
+import { savedJudge, signIn, signInAvailable, signOut, type Judge } from './judge'
 import { useFeed } from './useFeed'
 import { Dashboard } from './dashboard/Dashboard'
 import { speechRecognition, type Recognition } from './voice'
@@ -31,13 +32,42 @@ export default function App() {
   const [draft, setDraft] = useState(session)
   const [demo, setDemo] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  function changeSession() {
-    const next = draft.trim()
-    if (!next) return
-    setSession(next)
+  function switchSession(next: string) {
+    setSession(next); setDraft(next)
     try { localStorage.setItem('iris-session', next) } catch { /* Session still works without storage. */ }
   }
+  function changeSession() {
+    const next = draft.trim()
+    if (next) switchSession(next)
+  }
+  // Judge sign-in (Neon Auth). It is offered only when the sign-in service answers; without it, or if a
+  // sign-in fails, the app keeps the no-login session it already has.
+  const [judge, setJudge] = useState<Judge | null>(savedJudge)
+  const [canSignIn, setCanSignIn] = useState(false)
+  const [judgeName, setJudgeName] = useState(() => savedJudge()?.name ?? '')
+  const [judgeNote, setJudgeNote] = useState('')
+  const [signingIn, setSigningIn] = useState(false)
+  useEffect(() => {
+    let active = true
+    void signInAvailable().then(ok => { if (active) setCanSignIn(ok) })
+    return () => { active = false }
+  }, [])
+  async function judgeSignIn() {
+    setSigningIn(true); setJudgeNote('')
+    try { const next = await signIn(judgeName); setJudge(next); switchSession(next.id) }
+    catch (error) { setJudgeNote(error instanceof Error ? error.message : 'Sign-in isn’t available right now.') }
+    finally { setSigningIn(false) }
+  }
+  function judgeSignOut() { signOut(); setJudge(null); setJudgeNote(''); switchSession('judge-01') }
+  const signedIn = judge !== null && judge.id === session
   const sessionControls = <div className="session-bar"><form onSubmit={e => { e.preventDefault(); changeSession() }}><label htmlFor="session">SESSION</label><input id="session" value={draft} maxLength={80} onChange={e => setDraft(e.target.value)} /><button disabled={!draft.trim() || draft.trim() === session}>Apply</button></form>
+      {(canSignIn || signedIn) && <form className="judge-bar" onSubmit={e => { e.preventDefault(); void judgeSignIn() }}>
+        <label htmlFor="judge">YOUR NAME</label>
+        {signedIn
+          ? <p className="judge-in">Signed in as {judge.name}. This memory and garden are yours alone. <button type="button" onClick={judgeSignOut}>Sign out</button></p>
+          : <><input id="judge" value={judgeName} maxLength={60} placeholder="Sign in for a memory of your own" autoComplete="name" onChange={e => setJudgeName(e.target.value)} /><button disabled={signingIn || !judgeName.trim()}>{signingIn ? 'Signing in' : 'Sign in'}</button></>}
+        {judgeNote && <p className="judge-note" role="status">{judgeNote}</p>}
+      </form>}
       <label className="demo-toggle"><input type="checkbox" checked={demo} onChange={e => setDemo(e.target.checked)} /> Demo mode</label>
     </div>
   if (dashboard) return <Dashboard />

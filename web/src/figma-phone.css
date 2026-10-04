@@ -74,6 +74,9 @@ body:has(.phone-shell){background:#101112}
 .options-dialog .session-bar{display:grid;gap:16px;padding:0;font-size:12px}
 .options-dialog .session-bar form{display:grid;grid-template-columns:1fr auto;gap:10px}
 .options-dialog .session-bar label[for=session]{grid-column:1/-1;font-size:11px;letter-spacing:.5px}
+.options-dialog .session-bar label[for=judge]{grid-column:1/-1;font-size:11px;letter-spacing:.5px}
+.options-dialog .session-bar .judge-in,.options-dialog .session-bar .judge-note{grid-column:1/-1;margin:0;font-size:13px;line-height:1.5;color:#c1b3dd}
+.options-dialog .session-bar .judge-in button{margin-left:6px;text-decoration:underline}
 .options-dialog .session-bar input:not([type=checkbox]){width:100%;padding:12px;background:#101112;border:1px solid #ffffff20;border-radius:10px;color:#f7f5ff}
 .options-dialog .session-bar button{padding:12px;background:#c1b3dd18;border-radius:10px;color:#c1b3dd}
 .options-dialog .figma-extra{margin:0}
